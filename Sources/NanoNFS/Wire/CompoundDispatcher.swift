@@ -23,7 +23,12 @@ struct CompoundState {
     var tag: String = ""
 }
 
-actor CompoundDispatcher {
+/// Plain class (was an `actor` until throughput work made the isolation
+/// barrier the bottleneck on a single TCP connection): all stored state is
+/// immutable, mutable per-COMPOUND state lives in the local `CompoundState`,
+/// and the only shared mutable surface is `clients`, which is its own actor.
+/// Concurrent `dispatch` calls are therefore safe.
+final class CompoundDispatcher: Sendable {
     let server: any NFSServer
     let logger: Logger
     let clients: ClientRegistry
