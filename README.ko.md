@@ -1,65 +1,65 @@
 # nanonfs
 
-A loopback-only NFS server that provides a FUSE-like API — Swift Package.
+FUSE-like 한 API를 제공하는 로컬 액세스 (루프백) 전용 NFS 서버 — Swift Package.
 
-> This document is itself the **specification** for nanonfs. All external behavior, public API, and implementation scope take this document as the primary source.
-> The wire protocol supported by this package is **NFSv4.0 (RFC 7530)** only. The file `docs/rfc7530.txt` at the package root is the authoritative reference.
+> 이 문서 자체가 nanonfs의 **스펙 문서** 입니다. 모든 외부 동작·공개 API·구현 범위는 이 문서를 1차 출처로 삼습니다.
+> 본 패키지의 와이어 프로토콜은 **NFSv4.0 (RFC 7530)** 한 종만 지원합니다. 패키지 루트의 `docs/rfc7530.txt` 가 정본 근거 문서입니다.
 
 ---
 
-## 1. Why on earth?
+## 1. 왜 이딴 짓을?
 
-FUSE is not officially supported on macOS.
+macOS 에서는 FUSE 가 정식적으로 지원되지 않습니다.
 
-The alternative, `macFUSE`, requires a kernel extension, which entails invasive changes to the user's environment such as SIP, system extension approval, and secure boot policy. macOS, on the other hand, ships with an NFS client (`mount_nfs`) by default, which allows a user-space process to expose a virtual file system that can be mounted without any kernel extension.
+대안인 `macFUSE` 는 커널 익스텐션을 요구하기 때문에 SIP / 시스템 익스텐션 승인 / 보안 부트 정책 등 사용자 환경에 침습적인 변경을 동반합니다. 반면 macOS 는 NFS 클라이언트(`mount_nfs`) 를 기본 탑재하고 있고, 이는 어떠한 커널 익스텐션 없이도 사용자 공간(user-space) 프로세스가 노출한 가상 파일 시스템을 마운트할 수 있게 해줍니다.
 
-`nanonfs` exploits this fact. That is, you write callbacks like `lookup` / `read` / `write` in Swift, just like FUSE, and those callbacks are exposed as a **loopback NFS server**, mountable by `mount_nfs` on the same machine.
+`nanonfs` 는 이 점을 이용합니다. 즉, FUSE 처럼 `lookup` / `read` / `write` 같은 콜백을 Swift 로 작성하면, 그 콜백들이 **루프백 NFS 서버** 로 노출되어 동일 머신의 `mount_nfs` 가 마운트할 수 있는 형태로 동작합니다.
 
-The goals are exactly the following two:
+목표는 정확히 다음 두 가지뿐입니다.
 
-- Provide an NFSv4.0 server as a Swift library that `mount_nfs` can mount **on the same machine**.
-- Let users write a virtual file system using **only a FUSE-like callback abstraction**.
+- **동일 머신** 내에서 `mount_nfs` 가 마운트할 수 있는 NFSv4.0 서버를 Swift 라이브러리로 제공한다.
+- 사용자가 **FUSE 콜백 비슷한 추상화** 만으로 가상 파일 시스템을 작성할 수 있게 한다.
 
-Non-goals:
+비목표 (non-goals):
 
-- Replacing a multi-host / production NFS server. **Loopback only.**
-- NFSv3, NFSv4.1, pNFS support.
+- 멀티 호스트·프로덕션 NFS 서버 대체. **루프백 전용** 입니다.
+- NFSv3, NFSv4.1, pNFS 지원.
 - Kerberos / RPCSEC_GSS.
 - ACL / Named Attributes (NFSv4 xattr).
 
 ---
 
-## 2. Package / Platform
+## 2. 패키지 / 플랫폼
 
-- Swift Package name (repo directory): `nanonfs`
-- Swift module / product name: **`NanoNFS`**
+- Swift Package 이름 (repo 디렉토리): `nanonfs`
+- Swift module / product 이름: **`NanoNFS`**
 - `swift-tools-version`: `6.0`
-- Target platform: **macOS 14+** (other platforms are not supported)
-- Swift Concurrency: **strict concurrency** mode, all public types are `Sendable`
-- License: **MIT**
+- 대상 플랫폼: **macOS 14+** (다른 플랫폼은 지원하지 않습니다)
+- Swift Concurrency: **strict concurrency** 모드, 모든 공개 타입은 `Sendable`
+- 라이선스: **MIT**
 
-### Dependencies
+### 의존성
 
-| Package | Purpose |
+| 패키지 | 용도 |
 | --- | --- |
-| `apple/swift-nio` | TCP listener / async I/O |
-| `apple/swift-log` | Logging facade |
-| `apple/swift-atomics` | Lockless counters such as client / session counters |
+| `apple/swift-nio` | TCP 리스너 / 비동기 I/O |
+| `apple/swift-log` | 로깅 퍼사드 |
+| `apple/swift-atomics` | 클라이언트·세션 카운터 등 lockless 카운터 |
 
-Tests are written using **swift-testing** (`@Test`). The `mount_nfs` integration e2e tests assume a macOS environment.
+테스트는 **swift-testing** (`@Test`) 로 작성합니다. `mount_nfs` 연동 e2e 테스트는 macOS 환경 전제입니다.
 
-### Sources directory layout
+### Sources 디렉토리 구조
 
 ```
 Sources/NanoNFS/
-├── Public/      # Public API (NFSServer, NFSStat, NFSError, NFSServerListener ...)
-├── Wire/        # NFSv4 op handling, COMPOUND dispatch, stateid / clientid management
-├── RPC/         # ONC RPC (RFC 5531) message encoding, AUTH_SYS parsing
-├── XDR/         # XDR (RFC 4506) encoder / decoder
-└── Internal/    # Auxiliary utilities (logging, async helpers, file handle mapping, etc.)
+├── Public/      # 공개 API (NFSServer, NFSStat, NFSError, NFSServerListener ...)
+├── Wire/        # NFSv4 op 처리, COMPOUND 디스패치, stateid·clientid 관리
+├── RPC/         # ONC RPC (RFC 5531) 메시지 인코딩, AUTH_SYS 파싱
+├── XDR/         # XDR (RFC 4506) 인코더/디코더
+└── Internal/    # 보조 유틸 (logging, async helpers, file handle 매핑 등)
 ```
 
-All imports outside of `Public/` are `internal`. The only surface area the user sees is `Public/`.
+`Public/` 외부에 대한 import 는 모두 `internal` 입니다. 사용자가 보는 표면은 `Public/` 한 곳뿐.
 
 ---
 
@@ -75,35 +75,35 @@ actor MyFS: NFSServer {
     func getattr(handle: NFSFileHandle) async throws -> NFSStat { ... }
     func read(handle: NFSFileHandle, stateid: NFSStateID,
               offset: UInt64, count: Int) async throws -> NFSReadResult { ... }
-    // ... implement all other required NFSServer methods ...
+    // ... 기타 NFSServer 요구 메서드 전부 구현 ...
 }
 
 let listener = NFSServerListener(
     server: MyFS(),
-    bind: .loopback(port: 14049)   // default 127.0.0.1:14049
+    bind: .loopback(port: 14049)   // 기본 127.0.0.1:14049
 )
 
 try await listener.run()
 ```
 
-Then, in a separate shell:
+이후 별도 셸에서:
 
 ```sh
 sudo mount_nfs -o vers=4,port=14049,mountport=14049,tcp 127.0.0.1:/ /mnt/myfs
 ```
 
-The library does not help with invoking `mount_nfs` (that is the user's responsibility). However, the `Bind` configuration explicitly prevents binding to external interfaces in order to guarantee the loopback intent.
+`mount_nfs` 호출은 라이브러리가 도와주지 않습니다 (사용자 책임). 단, `Bind` 설정으로 외부 인터페이스 바인딩을 명시적으로 막아 루프백 의도를 보장합니다.
 
 ---
 
 ## 4. Public API
 
-All signatures in this section are the authoritative public API. If a signature and the actual code diverge, this document is canonical (the implementation must follow).
+본 절의 모든 시그니처가 공개 API의 정본입니다. 시그니처와 실제 코드가 어긋나면 본 문서를 정으로 봅니다 (구현이 따라옵니다).
 
-### 4.1 Identifier / value types
+### 4.1 식별자 / 값 타입
 
 ```swift
-/// Variable-length opaque NFSv4 file handle. The server issues it and the server interprets it.
+/// NFSv4 의 가변 길이 opaque file handle. 서버가 발급하고 서버가 해석한다.
 public struct NFSFileHandle: Hashable, Sendable {
     public var bytes: Data            // ≤ NFS4_FHSIZE (128) bytes
     public init(_ bytes: Data)
@@ -117,20 +117,20 @@ public struct NFSStateID: Hashable, Sendable {
     public static let bypass: NFSStateID
 }
 
-/// NFSv4 time type. Seconds + nanoseconds.
+/// NFSv4 시간 타입. 초 + 나노초.
 public struct NFSTime: Hashable, Sendable {
     public var seconds: Int64
     public var nseconds: UInt32
     public static func now() -> NFSTime
 }
 
-/// Object kind (NFSv4 nfs_ftype4).
+/// 객체 종류 (NFSv4 nfs_ftype4).
 public enum NFSObjectType: UInt32, Sendable {
     case regularFile = 1, directory, blockDevice, characterDevice,
          symbolicLink, socket, fifo, attributeDirectory, namedAttribute
 }
 
-/// FUSE-like POSIX-style stat. Bidirectionally converted with the NFSv4 FATTR4 bitmap inside the library.
+/// FUSE-like POSIX 스타일 stat. NFSv4 FATTR4 비트맵과 라이브러리 내부에서 양방향 변환된다.
 public struct NFSStat: Hashable, Sendable {
     public var type: NFSObjectType
     public var mode: UInt32           // POSIX permission bits
@@ -138,26 +138,26 @@ public struct NFSStat: Hashable, Sendable {
     public var uid: UInt32
     public var gid: UInt32
     public var size: UInt64
-    public var used: UInt64           // bytes actually used
-    public var fileid: UInt64         // inode-like stable identifier
+    public var used: UInt64           // bytes 실제 사용량
+    public var fileid: UInt64         // inode-like 안정 식별자
     public var atime: NFSTime
     public var mtime: NFSTime
     public var ctime: NFSTime
     public var rdev: (major: UInt32, minor: UInt32)?
 }
 
-/// SETATTR input. Only the `Optional` fields that are set are updated (the Swift reflection of the FATTR4 bitmap).
+/// SETATTR 입력. Optional 인 필드만 갱신한다 (FATTR4 비트맵의 Swift 반영).
 public struct NFSAttributesPatch: Sendable {
     public var mode: UInt32?
     public var uid: UInt32?
     public var gid: UInt32?
     public var size: UInt64?
-    public var atime: NFSTime?        // .some(.now()) is equivalent to SET_TO_SERVER_TIME
+    public var atime: NFSTime?        // .some(.now()) 면 SET_TO_SERVER_TIME 와 동치
     public var mtime: NFSTime?
 }
 ```
 
-### 4.2 Permission / share / lock
+### 4.2 권한 / 공유 / 락
 
 ```swift
 public struct NFSAccess: OptionSet, Sendable {
@@ -208,7 +208,7 @@ public enum NFSLockType: Sendable {
 
 public struct NFSLockRange: Sendable {
     public var offset: UInt64
-    public var length: UInt64         // 0xFFFFFFFFFFFFFFFF means up to EOF
+    public var length: UInt64         // 0xFFFFFFFFFFFFFFFF 이면 EOF 까지
 }
 
 public enum NFSWriteStability: UInt32, Sendable {
@@ -218,7 +218,7 @@ public enum NFSWriteStability: UInt32, Sendable {
 }
 ```
 
-### 4.3 Call result types
+### 4.3 호출 결과 타입
 
 ```swift
 public struct NFSReadResult: Sendable {
@@ -229,13 +229,13 @@ public struct NFSReadResult: Sendable {
 public struct NFSWriteResult: Sendable {
     public var count: Int
     public var committed: NFSWriteStability
-    public var writeVerifier: UInt64  // used for COMMIT verification
+    public var writeVerifier: UInt64  // COMMIT 검증에 사용
 }
 
 public struct NFSOpenResult: Sendable {
     public var stateid: NFSStateID
-    public var rflags: NFSOpenFlags                // whether OPEN_CONFIRM is required, etc.
-    public var delegation: NFSDelegationGrant      // setting it to .none is fine
+    public var rflags: NFSOpenFlags                // OPEN_CONFIRM 필요 여부 등
+    public var delegation: NFSDelegationGrant      // .none 으로 두면 OK
 }
 
 public struct NFSOpenFlags: OptionSet, Sendable {
@@ -253,12 +253,12 @@ public enum NFSDelegationGrant: Sendable {
 public struct NFSDirEntry: Sendable {
     public var fileid: UInt64
     public var name: String
-    public var attrs: NFSStat?        // for a piggybacked GETATTR response. If nil, the library issues a follow-up call
+    public var attrs: NFSStat?        // GETATTR 동시 응답용. nil 이면 라이브러리가 보충 호출
 }
 
 public struct NFSDirList: Sendable {
     public var entries: [NFSDirEntry]
-    public var nextCookie: UInt64?    // nil means no more
+    public var nextCookie: UInt64?    // nil 이면 더 없음
     public var verifier: UInt64
     public var eof: Bool
 }
@@ -272,10 +272,10 @@ public struct NFSLockTestResult: Sendable {
 }
 ```
 
-### 4.4 Errors
+### 4.4 에러
 
 ```swift
-/// User-facing errors corresponding to NFSv4 NFS4ERR_*. Unmapped throws become NFS4ERR_SERVERFAULT.
+/// NFSv4 NFS4ERR_* 에 대응하는 사용자 에러. 매핑되지 않은 throw 는 NFS4ERR_SERVERFAULT.
 public enum NFSError: Error, Sendable {
     case permission           // NFS4ERR_PERM
     case noEntry              // NFS4ERR_NOENT
@@ -311,27 +311,27 @@ public enum NFSError: Error, Sendable {
 }
 ```
 
-### 4.5 The `NFSServer` protocol
+### 4.5 NFSServer 프로토콜
 
-> **Every method must be implemented by the user (no default implementations).** Unsupported behavior must be explicitly rejected with `throw NFSError.notSupported`, `.readOnly`, etc.
+> **모든 메서드는 사용자가 직접 구현해야 합니다 (default 구현 없음)**. 지원하지 않는 동작은 `throw NFSError.notSupported` 또는 `.readOnly` 등으로 명시적으로 거부합니다.
 >
-> All methods are `async throws`. An `actor` conformer is recommended (the library does not serialize concurrent calls — the user is responsible for ensuring isolation, e.g. via an `actor`).
+> 모든 메서드는 `async throws`. 구현체는 `actor` 권장 (라이브러리가 동시 호출을 직렬화하지 않습니다 — 사용자가 actor 등의 격리로 보장하세요).
 
 ```swift
 public protocol NFSServer: Sendable {
 
-    // MARK: Root
-    /// The mount root file handle (used in the response to PUTROOTFH).
+    // MARK: 루트
+    /// 마운트의 루트 file handle (PUTROOTFH 응답에 쓰임).
     func root() async throws -> NFSFileHandle
 
-    // MARK: Metadata
+    // MARK: 메타데이터
     func access(handle: NFSFileHandle, mask: NFSAccess) async throws -> NFSAccess
     func getattr(handle: NFSFileHandle) async throws -> NFSStat
     func setattr(handle: NFSFileHandle,
-                 stateid: NFSStateID?,            // OPEN stateid when changing size
+                 stateid: NFSStateID?,            // 사이즈 변경 시 OPEN stateid
                  patch: NFSAttributesPatch) async throws -> NFSStat
 
-    // MARK: Directory
+    // MARK: 디렉토리
     func lookup(parent: NFSFileHandle, name: String) async throws -> NFSFileHandle
     func lookupParent(of handle: NFSFileHandle) async throws -> NFSFileHandle
     func readdir(handle: NFSFileHandle,
@@ -339,7 +339,7 @@ public protocol NFSServer: Sendable {
                  cookieVerifier: UInt64,
                  maxEntries: Int) async throws -> NFSDirList
 
-    // MARK: Create / remove / move
+    // MARK: 생성 / 삭제 / 이동
     func create(parent: NFSFileHandle, name: String,
                 type: NFSObjectType, attrs: NFSAttributesPatch) async throws -> NFSFileHandle
     func remove(parent: NFSFileHandle, name: String) async throws
@@ -393,20 +393,20 @@ public protocol NFSServer: Sendable {
 }
 
 public enum NFSCreateMode: Sendable {
-    case open                                    // open only; if it does not exist, noEntry
+    case open                                    // 열기만, 없으면 noEntry
     case create(NFSAttributesPatch)              // UNCHECKED
     case createExclusive(verifier: UInt64)       // EXCLUSIVE4
 }
 ```
 
-### 4.6 Listener / binding
+### 4.6 Listener / 바인딩
 
 ```swift
 public struct NFSBind: Sendable {
-    /// Allows only 127.0.0.1 / ::1. If an external interface is supplied, it `precondition`s at init time.
+    /// 127.0.0.1 / ::1 만 허용. 외부 인터페이스가 들어오면 init 단계에서 precondition.
     public static func loopback(port: UInt16 = 14049) -> NFSBind
-    /// Explicitly binds to an external IP — an escape hatch that breaks the loopback intent.
-    /// The library emits a warning log in this mode.
+    /// 명시적으로 외부 IP에 바인딩 — 루프백 의도를 깨뜨리는 escape hatch.
+    /// 라이브러리는 이 모드에서 경고 로그를 남깁니다.
     public static func external(host: String, port: UInt16) -> NFSBind
 }
 
@@ -416,68 +416,68 @@ public final class NFSServerListener: Sendable {
                 logger: Logger = Logger(label: "nanonfs"),
                 eventLoopGroup: EventLoopGroup? = nil)
 
-    /// swift-service-lifecycle style. Returns after a graceful shutdown if the Task is cancelled.
+    /// swift-service-lifecycle 스타일. Task 가 cancel 되면 graceful shutdown 후 반환.
     public func run() async throws
 
-    /// The currently bound (host, port). It has a value once binding is complete inside `run()`.
+    /// 현재 바인딩된 (host, port). run() 내부에서 바인딩이 끝난 뒤 값을 가집니다.
     public var boundAddress: SocketAddress? { get async }
 }
 ```
 
-- Default port: **14049** (a high port, since the standard NFS port 2049 requires root privileges).
-- Default host: **127.0.0.1** only. Anything other than `NFSBind.loopback` requires deliberately using `external(...)`.
-- Authentication: only **AUTH_SYS** is accepted. AUTH_NONE / RPCSEC_GSS are rejected with NFS4ERR_WRONGSEC.
-- Client lifecycle (`SETCLIENTID` / `RENEW` / lease expiration) is **managed automatically by the library** — it is not exposed to the `NFSServer` implementer.
-- Delegation: when the user supplies a `wantDelegation` hint, the library handles issuing and recalling it (CB_RECALL) automatically.
+- 기본 포트: **14049** (NFS 표준 2049 가 root 권한을 요구하기 때문에 high port).
+- 기본 호스트: **127.0.0.1** 단독. `NFSBind.loopback` 외에는 의식적으로 `external(...)` 을 써야 합니다.
+- 인증: **AUTH_SYS** 만 수락. AUTH_NONE / RPCSEC_GSS 는 NFS4ERR_WRONGSEC 으로 거부.
+- 클라이언트 라이프사이클 (`SETCLIENTID` / `RENEW` / lease 만료) 은 **라이브러리가 자동 관리** — `NFSServer` 구현체에 노출되지 않습니다.
+- Delegation 은 사용자가 `wantDelegation` 힌트를 주면 라이브러리가 발급/회수(CB_RECALL)를 자동 처리합니다.
 
 ---
 
-## 5. Implementation scope (Phase 1) / Roadmap
+## 5. 구현 범위 (Phase 1) / Roadmap
 
-### Phase 1 (v0.1 — first working version)
+### Phase 1 (v0.1 — 첫 번째 동작 가능 버전)
 
-- [ ] NFSv4.0 COMPOUND dispatch
-- [ ] AUTH_SYS / loopback binding
+- [ ] NFSv4.0 COMPOUND 디스패치
+- [ ] AUTH_SYS / loopback 바인딩
 - [ ] `PUTROOTFH` / `PUTFH` / `GETFH` / `SAVEFH` / `RESTOREFH`
 - [ ] `LOOKUP` / `LOOKUPP` / `ACCESS` / `GETATTR` / `SETATTR`
-- [ ] `READDIR` (including cookie / verifier)
-- [ ] `READ` / `WRITE` / `COMMIT` (including the stability argument)
+- [ ] `READDIR` (cookie/verifier 포함)
+- [ ] `READ` / `WRITE` / `COMMIT` (stability 인자 포함)
 - [ ] `CREATE` / `REMOVE` / `RENAME` / `LINK` / `READLINK`
 - [ ] `OPEN` / `OPEN_CONFIRM` / `OPEN_DOWNGRADE` / `CLOSE`
 - [ ] `LOCK` / `LOCKT` / `LOCKU` / `RELEASE_LOCKOWNER`
-- [ ] `SETCLIENTID` / `SETCLIENTID_CONFIRM` / `RENEW` (library-internal)
-- [ ] Delegation issuance + `CB_RECALL` (including the callback channel)
-- [ ] Bidirectional FATTR4 ↔ `NFSStat` mapping (mandatory + a subset of recommended attributes)
+- [ ] `SETCLIENTID` / `SETCLIENTID_CONFIRM` / `RENEW` (라이브러리 내부)
+- [ ] Delegation 발급 + `CB_RECALL` (콜백 채널 포함)
+- [ ] FATTR4 ↔ `NFSStat` 양방향 매핑 (필수 + 추천 어트리뷰트 일부)
 
-### Explicitly unsupported (for now)
+### 명시적 비지원 (당분간)
 
 - NFSv3, NFSv4.1+, pNFS
 - ACL (NFSv4 ACL, FATTR4_ACL)
 - Named Attributes (`OPENATTR`, NFSv4 xattr)
 - RPCSEC_GSS / Kerberos
-- Multi-host / external exposure (other than the escape hatch)
+- 다중 호스트 / 외부 노출 (escape hatch 외)
 
-### Roadmap (Phase 2 and beyond)
+### Roadmap (Phase 2 이후)
 
-- Unicode normalization options for name comparison
-- Detection of missing COMMITs / writeVerifier strategy options
+- 이름 비교를 위한 유니코드 정규화 옵션
+- COMMIT 누락 검출 / writeVerifier 전략 옵션
 - ACL / Named Attributes
-- Performance measurement / `ByteBuffer` overloads for READ and WRITE
-- Mount helper (a `mount_nfs` subprocess invoker, optional)
+- 성능 측정 / READ·WRITE 의 ByteBuffer 오버로드
+- mount 헬퍼 (`mount_nfs` 서브프로세스 invoker, optional)
 
 ---
 
-## 5.5 Demo / manual mount verification
+## 5.5 Demo / 수동 mount 검증
 
-Phase 1's `swift test` verifies — using a mock-based + loopback TCP simulation client — that the RFC 7530 mount sequence (SETCLIENTID → CONFIRM → PUTROOTFH/GETATTR → READDIR → LOOKUP/OPEN/READ) flows through end-to-end with OK status.
+Phase 1 의 `swift test` 는 mock 기반 + loopback TCP 시뮬레이션 클라이언트로 RFC 7530 의 마운트 시퀀스 (SETCLIENTID → CONFIRM → PUTROOTFH/GETATTR → READDIR → LOOKUP/OPEN/READ) 가 끝까지 OK 로 흘러가는 것을 검증합니다.
 
-Verifying with a real macOS NFS client (`mount_nfs`) requires **a separate demo run plus sudo**. It is not an automated test.
+진짜 macOS NFS 클라이언트 (`mount_nfs`) 로 검증하려면 **별도 데모 실행 + sudo 가 필요**합니다. 자동 테스트가 아닙니다.
 
 ```sh
-# 1. Start the demo server (foreground, Ctrl+C to stop)
+# 1. 데모 서버 띄우기 (foreground, Ctrl+C 로 종료)
 swift run NanoNFSDemo
 
-# 2. In another terminal:
+# 2. 다른 터미널에서:
 sudo mkdir -p /mnt/nanonfs
 sudo mount_nfs -o vers=4,port=14049,mountport=14049,tcp,resvport=0 \
     127.0.0.1:/ /mnt/nanonfs
@@ -488,23 +488,23 @@ cat /mnt/nanonfs/hello.txt
 sudo umount /mnt/nanonfs
 ```
 
-When `mount_nfs` fails with something like "Operation not supported", the cause is almost always that our server failed to provide some op or FATTR4 attribute the client expects — the log of `swift run NanoNFSDemo` (raise it to `debug` with `LOG_LEVEL=debug swift run NanoNFSDemo`) prints which op returned which status.
+`mount_nfs` 가 "Operation not supported" 등으로 실패하면, 거의 항상 우리 서버가 클라이언트가 기대하는 어떤 op 또는 FATTR4 attr 를 채우지 못한 것이 원인입니다 — `swift run NanoNFSDemo` 의 로그 (`debug` 레벨로 올리려면 `LOG_LEVEL=debug swift run NanoNFSDemo`) 에 어느 op 에서 어떤 status 가 떨어졌는지가 찍힙니다.
 
 ---
 
-## 6. Wire mapping (NFSv4 op ↔ NFSServer method)
+## 6. Wire 매핑 (NFSv4 op ↔ NFSServer 메서드)
 
-The library unpacks the COMPOUND sequence inside a single RPC into per-op dispatches and delegates to `NFSServer` methods according to the table below. The `PUTFH` family of ops do not invoke a user method — they only mutate the internal "current file handle" state.
+라이브러리는 단일 RPC 안의 COMPOUND 시퀀스를 op 단위로 풀어, 아래 표에 따라 `NFSServer` 메서드로 위임합니다. PUTFH 류 op 는 사용자 메서드를 호출하지 않고 내부 "현재 file handle" 상태만 갱신합니다.
 
-| NFSv4 op | NFSServer method | Notes |
+| NFSv4 op | NFSServer 메서드 | 비고 |
 | --- | --- | --- |
-| `PUTROOTFH` | `root()` | Sets the result as the current fh |
-| `PUTFH` | — | current fh = argument fh (validity is lazily checked via `getattr`) |
-| `GETFH` | — | Copies the current fh into the response |
-| `SAVEFH` / `RESTOREFH` | — | Internal stack |
+| `PUTROOTFH` | `root()` | 결과를 현재 fh 로 설정 |
+| `PUTFH` | — | 현재 fh = 인자 fh (유효성은 `getattr` 로 lazy 검증) |
+| `GETFH` | — | 현재 fh 를 응답에 복사 |
+| `SAVEFH` / `RESTOREFH` | — | 내부 스택 |
 | `ACCESS` | `access(handle:mask:)` | |
-| `GETATTR` | `getattr(handle:)` | The library converts the FATTR4 bitmap |
-| `SETATTR` | `setattr(handle:stateid:patch:)` | A stateid is required when changing size |
+| `GETATTR` | `getattr(handle:)` | FATTR4 비트맵은 라이브러리가 변환 |
+| `SETATTR` | `setattr(handle:stateid:patch:)` | size 갱신 시 stateid 필요 |
 | `LOOKUP` | `lookup(parent:name:)` | |
 | `LOOKUPP` | `lookupParent(of:)` | |
 | `READDIR` | `readdir(handle:cookie:cookieVerifier:maxEntries:)` | |
@@ -523,13 +523,13 @@ The library unpacks the COMPOUND sequence inside a single RPC into per-op dispat
 | `LOCK` | `lock(handle:type:range:owner:reclaim:stateid:)` | |
 | `LOCKT` | `lockTest(handle:type:range:owner:)` | |
 | `LOCKU` | `unlock(handle:range:stateid:)` | |
-| `SETCLIENTID` / `SETCLIENTID_CONFIRM` | — | library-internal |
-| `RENEW` | — | library-internal |
-| `RELEASE_LOCKOWNER` | — | library-internal (a lock-owner GC signal to the user) |
-| `DELEGRETURN` / `DELEGPURGE` | — | library-internal |
-| `OPENATTR` / ACL-related | — | hard-coded NFS4ERR_NOTSUPP |
-| `SECINFO` | — | hard-coded AUTH_SYS response |
-| `VERIFY` / `NVERIFY` | The library compares against the result of `getattr(handle:)` | no user call |
-| `ILLEGAL` / others | — | NFS4ERR_OP_ILLEGAL |
+| `SETCLIENTID` / `SETCLIENTID_CONFIRM` | — | 라이브러리 내부 |
+| `RENEW` | — | 라이브러리 내부 |
+| `RELEASE_LOCKOWNER` | — | 라이브러리 내부 (사용자에게는 lock owner GC 신호) |
+| `DELEGRETURN` / `DELEGPURGE` | — | 라이브러리 내부 |
+| `OPENATTR` / ACL 관련 | — | NFS4ERR_NOTSUPP 고정 |
+| `SECINFO` | — | AUTH_SYS 고정 응답 |
+| `VERIFY` / `NVERIFY` | `getattr(handle:)` 결과로 라이브러리 비교 | 사용자 호출 없음 |
+| `ILLEGAL` / 그 외 | — | NFS4ERR_OP_ILLEGAL |
 
-The callback channel (CB_COMPOUND, CB_RECALL) is sent by the library as a separate client-side NFSv4 callback RPC, and user code does not participate.
+콜백 채널 (CB_COMPOUND, CB_RECALL) 은 라이브러리가 별도 클라이언트 측 NFSv4 콜백 RPC 로 송출하며, 사용자 코드는 관여하지 않습니다.
