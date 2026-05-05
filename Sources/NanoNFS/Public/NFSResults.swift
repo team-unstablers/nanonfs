@@ -62,11 +62,23 @@ public struct NFSDirEntry: Sendable {
     /// Pre-computed attrs to satisfy the GETATTR-in-READDIR request mask.
     /// If `nil`, the dispatcher calls `getattr(handle:)` per entry.
     public var attrs: NFSStat?
+    /// Pre-computed file handle for this entry. If `nil`, the dispatcher falls
+    /// back to the *parent directory's* handle when the request mask asks for
+    /// FATTR4_FILEHANDLE — which is incorrect (every entry would advertise the
+    /// parent's fh, causing clients to drop entries on fileid/fh mismatch).
+    /// macOS Finder requests FATTR4_FILEHANDLE in its READDIR mask and
+    /// silently produces an empty listing when the per-entry fh is wrong, so
+    /// servers that want Finder compatibility MUST populate this field.
+    public var fileHandle: NFSFileHandle?
 
-    public init(fileid: UInt64, name: String, attrs: NFSStat? = nil) {
+    public init(fileid: UInt64,
+                name: String,
+                attrs: NFSStat? = nil,
+                fileHandle: NFSFileHandle? = nil) {
         self.fileid = fileid
         self.name = name
         self.attrs = attrs
+        self.fileHandle = fileHandle
     }
 }
 

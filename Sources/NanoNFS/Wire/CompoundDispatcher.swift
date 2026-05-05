@@ -523,11 +523,12 @@ private func encodeReaddirBody(list: NFSDirList,
     enc.writeUInt64(list.verifier)
 
     // Walk entries, emitting (bool=true, cookie, name, fattr4) for each.
-    // The dispatcher does not have direct access to per-entry handles, so
-    // FATTR4_FILEHANDLE in the requested mask is filled with the parent's
-    // handle. Users that want correct per-entry handles should pre-populate
-    // `NFSDirEntry.attrs` and pass the right info to FATTR (TODO: extend
-    // NFSDirEntry to carry an optional NFSFileHandle).
+    // FATTR4_FILEHANDLE is filled with `entry.fileHandle` if the caller
+    // populated it; otherwise we fall back to the parent's handle. The
+    // fallback is wrong (every entry would advertise the parent's fh —
+    // clients that ask for FATTR4_FILEHANDLE silently drop the entries on
+    // mismatch — see notes on `NFSDirEntry.fileHandle`), but we keep it for
+    // backwards compatibility with callers that don't know about the field.
     for entry in list.entries {
         enc.writeBool(true)
         // Use fileid as the cookie. RFC 7530 §16.24.3 lets the server pick
@@ -543,7 +544,8 @@ private func encodeReaddirBody(list: NFSDirList,
             uid: 0, gid: 0, size: 0, used: 0, fileid: entry.fileid,
             atime: .now(), mtime: .now(), ctime: .now()
         )
-        let (mask, vals) = encodeFattr4(stat: stat, fileHandle: parentFh, request: attrRequest)
+        let entryFh = entry.fileHandle ?? parentFh
+        let (mask, vals) = encodeFattr4(stat: stat, fileHandle: entryFh, request: attrRequest)
         mask.encode(into: &enc)
         enc.writeVariableOpaque(Data(vals.readableBytesView))
     }
