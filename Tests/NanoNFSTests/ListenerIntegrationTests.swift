@@ -159,6 +159,58 @@ struct ListenerIntegrationTests {
         #expect(Array(fhBytes) == [0x01]) // MockServer.rootHandle
     }
 
+    /// Fires N NULL RPCs back-to-back on a single connection, then drains N
+    /// replies. Verifies that the per-connection RPC pipelining path can
+    /// accept multiple in-flight calls on the same TCP socket and replies to
+    /// every one with a matching xid (RFC 5531 §9). Reply order is not
+    /// asserted — replies may legally come back unordered.
+    @Test("Pipelined NULL RPCs all complete on a single connection")
+    func pipelinedNullRPCs() async throws {
+        let server = MockServer()
+        let listener = NFSServerListener(
+            server: server,
+            bind: .loopback(port: 0),
+            logger: Logger(label: "test")
+        )
+        let runTask = Task { try await listener.run() }
+        let bound = try await waitForBind(listener: listener, timeoutMs: 1500)
+        defer { runTask.cancel() }
+        let port = UInt16(bound.port ?? 0)
+
+        let sock = try TCPClient(host: "127.0.0.1", port: port)
+        defer { sock.close() }
+
+        let n = 64
+        var sent: Set<UInt32> = []
+        for i in 0..<n {
+            let xid = UInt32(0x1000 &+ i)
+            sent.insert(xid)
+            let call = encodeRpcCall(
+                xid: xid,
+                program: NFSProgram.number,
+                version: NFSProgram.version,
+                procedure: NFSProcedure.null.rawValue,
+                credential: .none,
+                verifier: .none
+            )
+            try sock.write(rpcWrapSingleFragment(call))
+        }
+
+        var seen: Set<UInt32> = []
+        for _ in 0..<n {
+            let frame = try sock.readRecord(timeoutSeconds: 5.0)
+            var dec = XDRDecoder(frame)
+            let xid = try dec.readUInt32()
+            seen.insert(xid)
+            #expect(try dec.readUInt32() == RPCMessageType.reply.rawValue)
+            #expect(try dec.readUInt32() == RPCReplyStatus.msgAccepted.rawValue)
+            _ = try dec.readUInt32()                  // verifier flavor
+            _ = try dec.readVariableOpaqueData()      // verifier body
+            #expect(try dec.readUInt32() == RPCAcceptStatus.success.rawValue)
+        }
+        #expect(seen == sent)
+    }
+
     /// Polls listener.boundAddress until it is non-nil or the timeout fires.
     private func waitForBind(listener: NFSServerListener,
                              timeoutMs: Int) async throws -> SocketAddress {

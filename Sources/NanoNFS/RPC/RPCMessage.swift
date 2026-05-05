@@ -140,6 +140,12 @@ extension AuthSysCredential {
 }
 
 // MARK: - Encoding
+//
+// All `rpcEncode*` functions return a ByteBuffer whose first four bytes are
+// the RFC 5531 §11 record-mark header (last-fragment + body length). The
+// header is written in-place at the end of encoding via the placeholder
+// pattern, so the returned buffer is ready to be sent on the wire without an
+// extra wrap step.
 
 /// Build a successful (MSG_ACCEPTED, SUCCESS) reply with `body` as the
 /// procedure-specific results. The verifier is AUTH_NONE, which is what
@@ -148,6 +154,8 @@ func rpcEncodeAcceptedReply(xid: UInt32,
                             verifier: RPCOpaqueAuth = .none,
                             results: ByteBuffer) -> ByteBuffer {
     var enc = XDREncoder()
+    enc.buffer.reserveCapacity(results.readableBytes + 64)
+    let frameAt = enc.placeholderUInt32()
     enc.writeUInt32(xid)
     enc.writeUInt32(RPCMessageType.reply.rawValue)
     enc.writeUInt32(RPCReplyStatus.msgAccepted.rawValue)
@@ -155,6 +163,7 @@ func rpcEncodeAcceptedReply(xid: UInt32,
     enc.writeUInt32(RPCAcceptStatus.success.rawValue)
     var body = results
     enc.buffer.writeBuffer(&body)
+    finishRecordMark(at: frameAt, in: &enc)
     return enc.buffer
 }
 
@@ -165,6 +174,7 @@ func rpcEncodeAcceptError(xid: UInt32,
                           progMismatchHigh: UInt32 = 0,
                           verifier: RPCOpaqueAuth = .none) -> ByteBuffer {
     var enc = XDREncoder()
+    let frameAt = enc.placeholderUInt32()
     enc.writeUInt32(xid)
     enc.writeUInt32(RPCMessageType.reply.rawValue)
     enc.writeUInt32(RPCReplyStatus.msgAccepted.rawValue)
@@ -174,30 +184,43 @@ func rpcEncodeAcceptError(xid: UInt32,
         enc.writeUInt32(progMismatchLow)
         enc.writeUInt32(progMismatchHigh)
     }
+    finishRecordMark(at: frameAt, in: &enc)
     return enc.buffer
 }
 
 /// Build a denied reply with AUTH_ERROR + the specified `auth_stat`.
 func rpcEncodeAuthError(xid: UInt32, status: RPCAuthStatus) -> ByteBuffer {
     var enc = XDREncoder()
+    let frameAt = enc.placeholderUInt32()
     enc.writeUInt32(xid)
     enc.writeUInt32(RPCMessageType.reply.rawValue)
     enc.writeUInt32(RPCReplyStatus.msgDenied.rawValue)
     enc.writeUInt32(RPCRejectStatus.authError.rawValue)
     enc.writeUInt32(status.rawValue)
+    finishRecordMark(at: frameAt, in: &enc)
     return enc.buffer
 }
 
 /// Build a denied reply with RPC_MISMATCH (low/high RPC versions supported).
 func rpcEncodeRpcMismatch(xid: UInt32, low: UInt32 = 2, high: UInt32 = 2) -> ByteBuffer {
     var enc = XDREncoder()
+    let frameAt = enc.placeholderUInt32()
     enc.writeUInt32(xid)
     enc.writeUInt32(RPCMessageType.reply.rawValue)
     enc.writeUInt32(RPCReplyStatus.msgDenied.rawValue)
     enc.writeUInt32(RPCRejectStatus.rpcMismatch.rawValue)
     enc.writeUInt32(low)
     enc.writeUInt32(high)
+    finishRecordMark(at: frameAt, in: &enc)
     return enc.buffer
+}
+
+/// Patch the four-byte record-mark placeholder at `offset` with the
+/// last-fragment flag plus the body length that follows it.
+private func finishRecordMark(at offset: Int, in enc: inout XDREncoder) {
+    let bodyLength = enc.buffer.readableBytes - offset - 4
+    let header = RPCRecordMarking.lastFragmentFlag | UInt32(bodyLength)
+    enc.setUInt32(at: offset, header)
 }
 
 private func encodeOpaqueAuth(_ auth: RPCOpaqueAuth, into enc: inout XDREncoder) {

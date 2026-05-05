@@ -106,9 +106,23 @@ public final class NFSServerListener: Sendable {
         }
     }
 
-    /// One TCP connection's worth of work: read framed RPC messages, dispatch,
-    /// write framed replies. Returns when the peer half-closes or any I/O
-    /// error happens (logged at info — peers go away mid-write all the time).
+    /// One TCP connection's worth of work: read framed RPC messages, dispatch
+    /// them concurrently (up to `maxInFlightRequestsPerConnection`), and write
+    /// framed replies. Each `rpcEncode*` already returns a buffer with the
+    /// record-mark header in place, so the writer only does `outbound.write`.
+    ///
+    /// Three cooperating roles inside the per-connection task group:
+    ///   • Reader (the outer body): consumes `inbound`, runs the record-mark
+    ///     decoder, and spawns a dispatch task per assembled message.
+    ///   • Dispatch tasks: run `handleSingleRpcMessage` and push the reply
+    ///     buffer onto the writer queue. NFSv4 over TCP matches replies to
+    ///     calls by xid (RFC 5531 §9), so unordered replies are spec-legal.
+    ///   • Writer task: drains the queue and serialises calls to
+    ///     `outbound.write` (NIOAsyncChannel is single-writer).
+    ///
+    /// In-flight count is bounded by `inFlightSemaphore` so a noisy client
+    /// cannot make the server allocate one task per pipelined RPC without
+    /// limit.
     private static func serve(
         child: NIOAsyncChannel<ByteBuffer, ByteBuffer>,
         dispatcher: CompoundDispatcher,
@@ -116,29 +130,113 @@ public final class NFSServerListener: Sendable {
     ) async {
         do {
             try await child.executeThenClose { inbound, outbound in
-                var decoder = RPCRecordMarkingDecoder()
-                var pending = ByteBuffer()
-                for try await chunk in inbound {
-                    var c = chunk
-                    pending.writeBuffer(&c)
-                    pumping: while true {
-                        switch decoder.step(consuming: &pending) {
-                        case .needMore:
-                            break pumping
-                        case .message(let msg):
-                            let reply = await handleSingleRpcMessage(
-                                msg, dispatcher: dispatcher, logger: logger
-                            )
-                            try await outbound.write(rpcWrapSingleFragment(reply))
-                        case .error(let e):
-                            logger.warning("RPC framing error, dropping connection: \(e)")
-                            return
+                let semaphore = AsyncSemaphore(value: maxInFlightRequestsPerConnection)
+                let (replies, replyCont) = AsyncStream<ByteBuffer>.makeStream(
+                    bufferingPolicy: .unbounded
+                )
+
+                await withTaskGroup(of: Void.self) { group in
+                    // Writer. Swallow write errors here — peers half-closing
+                    // mid-write is routine and not worth propagating up.
+                    group.addTask {
+                        do {
+                            for await reply in replies {
+                                try await outbound.write(reply)
+                            }
+                        } catch {
+                            logger.info("outbound write ended: \(error)")
                         }
                     }
+
+                    // Reader + dispatch pool. The discarding inner group lets
+                    // us await all in-flight dispatches before signalling the
+                    // writer that no more replies are coming.
+                    do {
+                        try await withThrowingDiscardingTaskGroup { dispatchGroup in
+                            var decoder = RPCRecordMarkingDecoder()
+                            var pending = ByteBuffer()
+                            readLoop: for try await chunk in inbound {
+                                if pending.readableBytes == 0 {
+                                    // Fast path: no carry-over from the previous
+                                    // chunk, adopt the inbound buffer directly.
+                                    pending = chunk
+                                } else {
+                                    var c = chunk
+                                    pending.writeBuffer(&c)
+                                }
+                                pumping: while true {
+                                    switch decoder.step(consuming: &pending) {
+                                    case .needMore:
+                                        break pumping
+                                    case .message(let msg):
+                                        await semaphore.acquire()
+                                        dispatchGroup.addTask {
+                                            let body = await handleSingleRpcMessage(
+                                                msg,
+                                                dispatcher: dispatcher,
+                                                logger: logger
+                                            )
+                                            replyCont.yield(body)
+                                            await semaphore.release()
+                                        }
+                                    case .error(let e):
+                                        logger.warning("RPC framing error, dropping connection: \(e)")
+                                        break readLoop
+                                    }
+                                }
+                            }
+                        }
+                    } catch {
+                        // Inbound errored or peer half-closed mid-stream;
+                        // fall through to drain whatever the writer still has.
+                        logger.info("inbound ended: \(error)")
+                    }
+
+                    // All dispatches awaited (discarding-group exit). Tell the
+                    // writer no more replies are coming so it can finish.
+                    replyCont.finish()
                 }
             }
         } catch {
             logger.info("connection ended: \(error)")
+        }
+    }
+}
+
+/// Cap on how many RPC dispatches can be running for a single TCP
+/// connection. macOS's nfsiod typically issues at most ~16 parallel RPCs,
+/// so 64 leaves comfortable headroom without unbounded task allocation.
+private let maxInFlightRequestsPerConnection: Int = 64
+
+/// Counting semaphore implemented over `CheckedContinuation`. Used to cap
+/// the dispatch fan-out per connection. Cancellation is deliberately not
+/// modelled: the outer task group cancels children on connection teardown,
+/// at which point the actor itself becomes unreachable.
+final actor AsyncSemaphore {
+    private var available: Int
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(value: Int) {
+        precondition(value >= 0)
+        self.available = value
+    }
+
+    func acquire() async {
+        if available > 0 {
+            available -= 1
+            return
+        }
+        await withCheckedContinuation { cont in
+            waiters.append(cont)
+        }
+    }
+
+    func release() {
+        if !waiters.isEmpty {
+            let next = waiters.removeFirst()
+            next.resume()
+        } else {
+            available += 1
         }
     }
 }

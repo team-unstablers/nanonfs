@@ -184,6 +184,10 @@ struct RPCTests {
         let reply = rpcEncodeAcceptedReply(xid: 42, results: results)
 
         var dec = XDRDecoder(reply)
+        // Record mark: last-fragment flag + body length.
+        let mark = try dec.readUInt32()
+        #expect((mark & RPCRecordMarking.lastFragmentFlag) != 0)
+        #expect((mark & RPCRecordMarking.lengthMask) == UInt32(reply.readableBytes - 4))
         #expect(try dec.readUInt32() == 42)
         #expect(try dec.readUInt32() == RPCMessageType.reply.rawValue)
         #expect(try dec.readUInt32() == RPCReplyStatus.msgAccepted.rawValue)
@@ -202,6 +206,9 @@ struct RPCTests {
     func encodeAuthError() throws {
         let reply = rpcEncodeAuthError(xid: 7, status: .tooweak)
         var dec = XDRDecoder(reply)
+        let mark = try dec.readUInt32()
+        #expect((mark & RPCRecordMarking.lastFragmentFlag) != 0)
+        #expect((mark & RPCRecordMarking.lengthMask) == UInt32(reply.readableBytes - 4))
         #expect(try dec.readUInt32() == 7)
         #expect(try dec.readUInt32() == RPCMessageType.reply.rawValue)
         #expect(try dec.readUInt32() == RPCReplyStatus.msgDenied.rawValue)
