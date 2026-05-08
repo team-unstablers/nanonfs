@@ -1,0 +1,131 @@
+<agent-task-report task="20260509-audit-rfc-reference.rfc4506.xml">
+    <agent>
+        <name>Claude Code</name>
+        <model>claude-opus-4-7[1m]</model>
+    </agent>
+    <executed-at>2026-05-09T00:00:00Z</executed-at>
+    <report>
+        # RFC 4506 reference audit results
+
+        ## Audit scope
+
+        Every `RFC 4506 §X` (and bare `RFC 4506`) citation in the
+        repository was located via `grep -rn "RFC 4506\|RFC4506\|rfc4506\|rfc 4506"`
+        across `Sources/`, `Tests/`, `CLAUDE.md`, `README.md`, and
+        `README.ko.md`, then cross-checked against the actual section
+        numbers and section bodies of `docs/rfc4506.txt`.
+
+        Real top-level structure of RFC 4506 (XDR: External Data
+        Representation Standard):
+
+        - §1  Introduction
+        - §2  Changes from RFC 1832
+        - §3  Basic Block Size
+        - §4  XDR Data Types
+            - §4.1   Integer
+            - §4.2   Unsigned Integer
+            - §4.3   Enumeration
+            - §4.4   Boolean
+            - §4.5   Hyper Integer and Unsigned Hyper Integer
+            - §4.6   Floating-Point
+            - §4.7   Double-Precision Floating-Point
+            - §4.8   Quadruple-Precision Floating-Point
+            - §4.9   Fixed-Length Opaque Data
+            - §4.10  Variable-Length Opaque Data
+            - §4.11  String
+            - §4.12  Fixed-Length Array
+            - §4.13  Variable-Length Array
+            - §4.14  Structure
+            - §4.15  Discriminated Union
+            - §4.16  Void
+            - §4.17  Constant
+            - §4.18  Typedef
+            - §4.19  Optional-Data
+            - §4.20  Areas for Future Enhancement
+        - §5  Discussion
+        - §6  The XDR Language Specification
+        - §7  An Example of an XDR Data Description
+        - §8  Security Considerations
+        - §9  IANA Considerations
+        - §10 Trademarks and Owners
+        - §11 ANSI/IEEE Standard 754-1985
+
+        ## Result: 0 hallucinations
+
+        All RFC 4506 citations in the repository were verified to point
+        at the section that actually defines the cited content. No
+        edits were made.
+
+        ## Verified citations (all left unchanged)
+
+        Section-numbered citations, all in `Sources/NanoNFS/XDR/XDR.swift`:
+
+        | Line | Citation | Body in `docs/rfc4506.txt` | Verdict |
+        | ---- | -------- | -------------------------- | ------- |
+        | `:18`  | `§4.10 / §4.11` — declared-length cap on variable-opaque/string | §4.10: "It is an error to encode a length greater than the maximum described in the specification." §4.11: same wording. | OK |
+        | `:44`  | `§4.1` — signed integer, 32-bit two's complement, big-endian | §4.1: "32-bit datum that encodes an integer ... two's complement notation. The most and least significant bytes are 0 and 3" (i.e. big-endian). | OK |
+        | `:49`  | `§4.2` — unsigned integer, 32-bit big-endian | §4.2: "32-bit datum ... unsigned binary number whose most and least significant bytes are 0 and 3". | OK |
+        | `:54`  | `§4.5` — signed hyper, 64-bit big-endian | §4.5: "64-bit (8-byte) numbers ... two's complement notation. The most and least significant bytes are 0 and 7." | OK |
+        | `:59`  | `§4.5` — unsigned hyper, 64-bit big-endian | §4.5 covers both signed and unsigned hyper in one paragraph. | OK |
+        | `:64`  | `§4.4` — boolean, encoded as the integer 0 or 1 | §4.4: "bool ... equivalent to enum { FALSE = 0, TRUE = 1 }". | OK |
+        | `:71`  | `§4.9` — fixed-length opaque, padded to 4-byte boundary with zeros | §4.9: "n bytes are followed by enough (0 to 3) residual zero bytes, r, to make the total byte count a multiple of four". | OK |
+        | `:98`  | `§4.10` — variable-length opaque: length (UInt32) + bytes + zero pad | §4.10: number n encoded as unsigned integer + n bytes + 0..3 residual zero bytes. | OK |
+        | `:117` | `§4.11` — string is a variable-length opaque of UTF-8 bytes | §4.11: variable-length opaque encoding (length + bytes + pad). See FYI note below about ASCII vs UTF-8. | OK |
+
+        Bare `RFC 4506` mentions (no §, just identifying the spec the
+        XDR module implements), all left unchanged:
+
+        - `README.md:60` / `README.ko.md:60` — folder structure comment
+        - `CLAUDE.md:43` (§2 module structure)
+        - `CLAUDE.md:158` (work log, 2026-05-03 entry — historical record)
+        - `Tests/NanoNFSTests/XDRTests.swift:6` — test suite name
+        - `Sources/NanoNFS/XDR/XDR.swift:5` — file header
+
+        ## FYI: RFC 4506 §4.11 wording vs nanonfs `writeString`
+
+        The doc comment at `XDR.swift:117` describes XDR strings as a
+        "variable-length opaque of **UTF-8** bytes". RFC 4506 §4.11
+        itself says "**ASCII** bytes":
+
+            > The standard defines a string of n (numbered 0 through
+            > n-1) ASCII bytes to be the number n encoded as an
+            > unsigned integer ...
+
+        This is not a hallucinated section number — §4.11 *is* String,
+        and the structural encoding (length-prefixed, 4-byte padded)
+        described in the comment is exactly what §4.11 mandates. The
+        UTF-8 part comes from the application protocol layered on top:
+        NFSv4 (RFC 7530 §1.4.3 "Internationalization") explicitly
+        mandates UTF-8 for `utf8string` / `component4` / `linktext4`
+        and friends. The nanonfs comment is therefore describing the
+        composition (RFC 4506 §4.11 framing + NFSv4 UTF-8 content)
+        rather than a verbatim quote of §4.11. Left as-is, since the
+        section reference is correct and the practical encoding
+        described matches how nanonfs is actually used. Flagging only
+        in case the maintainer wants to tighten the wording later
+        (e.g. "§4.11 — string framing; NFSv4 mandates UTF-8 content").
+
+        ## Build status
+
+        No code changes were made by this audit, so build / test
+        status is unchanged from before the audit.
+    </report>
+    <note>
+        # Audit method note
+
+        - Driven entirely by `grep` over the working tree plus direct
+          reads of `docs/rfc4506.txt`. No memory-based reasoning about
+          RFC 4506 section numbers was used (per `CLAUDE.md` §4
+          anti-hallucination rule, generalized to RFC 4506 / 5531 in
+          the same spirit).
+        - Outcome contrasts notably with the same day's RFC 7530 (many
+          defects) and RFC 5531 (3 defects) audits. RFC 4506 has a
+          shallow, stable, well-cited section structure (§4.1..§4.20
+          for data types, with no contested numbering between RFC 4506
+          and the older RFC 1832), so the failure modes that bit the
+          7530/5531 audits — op-number-vs-§16 offset, hallucinated
+          appendix sub-numbers — simply have no analogue here. Worth
+          recording so future agents do not waste cycles re-auditing
+          this surface.
+    </note>
+</agent-task-report>
