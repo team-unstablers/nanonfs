@@ -1,0 +1,126 @@
+<agent-task lang="ko">
+    <objective>
+        # BSD Socket을 'Yet Another' 트랜스포트 구현체로써 제공한다
+
+        - Swift-NIO 외에도 BSD Socket을 트랜스포트 구현체로 사용할 수 있는, '또다른' 선택지가 있었으면 합니다.
+        - 이 프로젝트에 의존하고 있는 (이 프로젝트를 시작하게 된 주 목적인) Noctiluca 프로젝트에서는, Swift-NIO를 사용하고 있지 않습니다.
+          단순히 NFS 서버 기능을 위해서 Swift-NIO에 대한 의존을 추가하기에는 너무... 그렇습니다. 😅
+
+        <sub-objective>
+            # 트랜스포트 구현체를 추상화하고, 선택할 수 있도록 한다 
+
+            <code lang="text/x-pseudocode; variant=swift">
+                public enum NFSTransport: Sendable, Equatable {
+                #if nio
+                    case nio
+                #endif
+                #if bsdsocket
+                    case bsdSocket
+                #endif
+
+                    /// 어, 그런데 enum이면 외부에서 구현체를 추가하기가... 
+                    /// 아, 이렇게 가능하겠구나!
+                    case custom(NFSTransportImplementation)
+                }
+            </code>
+
+            <code lang="text/x-pseudocode; variant=swift">
+                import NanoNFS
+
+                actor MyFS: NFSServer {
+                    func root() async throws -> NFSFileHandle { ... }
+
+                    func lookup(parent: NFSFileHandle, name: String) async throws -> NFSFileHandle { ... }
+                    func getattr(handle: NFSFileHandle) async throws -> NFSStat { ... }
+                    func read(handle: NFSFileHandle, stateid: NFSStateID,
+                              offset: UInt64, count: Int) async throws -> NFSReadResult { ... }
+                    // ... implement all other required NFSServer methods ...
+                }
+
+                let transport: NFSTransport = if (args.contains("--use-bsd-socket") {
+                    .bsdSocket
+                } else {
+                    .nio
+                }
+
+                let listener = NFSServerListener(
+                    server: MyFS(),
+                    bind: .loopback(port: 14049),
+                    transport: transport
+                )
+
+                try await listener.run()
+            </code>
+        </sub-objective>
+        <sub-objective>
+            # Package.swift: swift-tools-version을 6.2로 올리고, traits를 통해 구현체를 선택적으로 설치할 수 있도록 한다
+
+            <code lang="text/x-pseudocode; variant=swift">
+                // swift-tools-version: 6.2 # ← BREAKING CHANGE: Swift 6.2로 bump
+                import PackageDescription
+
+                let package = Package(
+                    name: "nanonfs",
+                    platforms: [
+                        .macOS(.v14),
+                    ],
+                    products: [
+                        .library(
+                            name: "NanoNFS",
+                            targets: ["NanoNFS"]
+                        ),
+                    ],
+                    traits: [
+                        "nio": [],
+                        "bsdsocket": [],
+                        "default": ["nio"]
+                    ], 
+                    dependencies: [
+                        .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
+                        .package(url: "https://github.com/apple/swift-log.git", from: "1.5.4"),
+                        .package(url: "https://github.com/apple/swift-atomics.git", from: "1.2.0"),
+                    ],
+                    targets: [
+                        .target(
+                            name: "NanoNFS",
+                            dependencies: [
+                                .product(name: "NIO", package: "swift-nio", condition: .when(traits: ["nio"])),
+                                .product(name: "NIOCore", package: "swift-nio", condition: .when(traits: ["nio"])),
+                                .product(name: "NIOPosix", package: "swift-nio", condition: .when(traits: ["nio"])),
+                                .product(name: "NIOFoundationCompat", package: "swift-nio", condition: .when(traits: ["nio"])),
+                                .product(name: "Logging", package: "swift-log", condition: .when(traits: ["nio"])),
+                                .product(name: "Atomics", package: "swift-atomics", condition: .when(traits: ["nio"])),
+                            ],
+                            path: "Sources/NanoNFS",
+                            swiftSettings: [
+                                .swiftLanguageMode(.v6),
+                                .enableUpcomingFeature("StrictConcurrency"),
+                            ]
+                        ),
+                        .executableTarget(
+                            name: "NanoNFSDemo",
+                            dependencies: [
+                                "NanoNFS",
+                                .product(name: "Logging", package: "swift-log"),
+                            ],
+                            path: "Sources/NanoNFSDemo",
+                            swiftSettings: [
+                                .swiftLanguageMode(.v6),
+                                .enableUpcomingFeature("StrictConcurrency"),
+                            ]
+                        ),
+                        .testTarget(
+                            name: "NanoNFSTests",
+                            dependencies: ["NanoNFS"],
+                            path: "Tests/NanoNFSTests",
+                            swiftSettings: [
+                                .swiftLanguageMode(.v6),
+                                .enableUpcomingFeature("StrictConcurrency"),
+                            ]
+                        ),
+                    ]
+                )
+            </code>
+        </sub-objective>
+    </objective>
+</agent-task>

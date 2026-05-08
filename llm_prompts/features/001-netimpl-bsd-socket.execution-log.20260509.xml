@@ -1,0 +1,151 @@
+<agent-task-report task="features/001-netimpl-bsd-socket.xml">
+    <agent>
+        <name>Claude Code</name>
+        <model>claude-opus-4-7</model>
+    </agent>
+    <executed-at>2026-05-09T00:00:00Z</executed-at>
+    <report>
+        # Validity review — `001-netimpl-bsd-socket.xml`
+
+        Scope of this turn: validate the task definition against the current
+        codebase and surface gaps that block straight execution. No code was
+        written. Outcome: the task is directionally sound but the spec is
+        incomplete; spec revision (1.1) was agreed with the user as the next
+        step.
+
+        ## Verdict
+
+        **Feasible, but spec rewrite required.** The high-level objective —
+        offering a non-NIO BSD-socket transport behind a trait-gated
+        abstraction — does not conflict with the README's loopback-only
+        scope, and the `NFSServer` callback abstraction is already
+        transport-agnostic (no NIO imports under `Public/NFSServer.swift`).
+        However, the task as written makes assumptions that do not hold
+        against the current code, listed below.
+
+        ## Findings
+
+        ### F1. NIO `ByteBuffer` is pervasive — cannot be trait-gated wholesale
+
+        `NIOCore.ByteBuffer` is used as the encoding medium across
+        XDR / RPC / Wire layers. Concrete counts:
+
+        - `Sources/NanoNFS/XDR/XDR.swift` — 8 usages, imports `NIOCore`
+        - `Sources/NanoNFS/RPC/RPCRecordMarking.swift` — 7 usages
+        - `Sources/NanoNFS/RPC/RPCMessage.swift` — 9 usages
+        - `Sources/NanoNFS/Wire/CompoundDispatcher.swift` — 130 usages
+        - `Sources/NanoNFS/Wire/FATTR4.swift` — 2 usages
+        - `Sources/NanoNFS/Wire/RPCSession.swift` — 3 usages
+        - `Sources/NanoNFS/Wire/SetattrDecoder.swift` — 1 usage
+        - `Sources/NanoNFS/Public/NFSServerListener.swift` — 6 usages
+
+        The task's draft `Package.swift` puts every NIO product (including
+        `NIOCore`) plus `swift-log` and `swift-atomics` behind
+        `condition: .when(traits: ["nio"])`. Disabling the `nio` trait would
+        leave the entire encoder path uncompilable.
+
+        **Decision (with user).** Keep `NIOCore`, `NIOFoundationCompat`,
+        `swift-log`, `swift-atomics` as unconditional baseline dependencies.
+        Trait-gate only `NIOPosix` (and the listener that uses it).
+        BSD-socket transport will produce/consume `NIOCore.ByteBuffer`
+        directly, since `NIOCore` is pure-Swift and lightweight.
+
+        ### F2. `NFSTransport` enum + `case custom(NFSTransportImplementation)` cannot synthesize `Equatable`
+
+        The pseudocode declares `NFSTransport: Sendable, Equatable` while
+        carrying an existential associated value. Existentials do not
+        synthesize `Equatable`. The enum must either drop `Equatable`,
+        compare only the case discriminant, or constrain the protocol to
+        `AnyObject` and use reference identity. Spec revision must pick one.
+
+        ### F3. Public API leaks NIO types (already documented in README)
+
+        The current public surface, mirrored in `README.md` §4:
+
+        ```swift
+        public init(..., eventLoopGroup: EventLoopGroup? = nil)
+        public var boundAddress: SocketAddress? { get async }
+        ```
+
+        Both leak NIO types. Trait-gating the listener requires replacing
+        them with transport-agnostic equivalents (e.g. a `(host, port)`
+        tuple or a small custom address type, and an injection slot for
+        NIO-specific config that lives inside the NIO transport).
+
+        **Decision (with user).** Replace these with transport-agnostic
+        types as a breaking API change; update `README.md` §4 alongside
+        the spec.
+
+        ### F4. `NFSTransportImplementation` protocol surface is undefined
+
+        The task names the protocol but does not sketch its requirements.
+        At minimum it must support: bind(host, port), accept loop,
+        per-connection framed read/write, cooperative cancellation, and
+        bound-address exposure. This is a non-trivial design task and
+        gates the trait/Equatable decisions above.
+
+        ### F5. `swift-tools-version` 6.0 → 6.2 bump
+
+        SE-0450 traits ship in Swift 6.2. Bump is acceptable per the user
+        (next release is breaking anyway). Side notes for the spec
+        revision:
+
+        - The `traits: ["nio": [], ...]` dictionary literal is pseudocode;
+          the real shape is `[Trait]` (array of typed entries with
+          `.default(enabledTraits:)`).
+        - `condition: .when(traits: [...])` applies only inside a target's
+          `dependencies`; the task example follows this correctly.
+
+        ### F6. Minor / clean items
+
+        - `NFSBind` is already transport-agnostic (`loopback` / `external`).
+          No changes required there.
+        - `swift-log` and `swift-atomics` are NIO-independent and broadly
+          used; they must stay unconditional (also covered by F1's
+          decision).
+        - Demo executable and tests only touch `NFSServerListener`; they
+          will follow whatever public-API shape the revised spec lands on.
+
+        ## Decisions captured during review
+
+        Confirmed with the user via `AskUserQuestion`:
+
+        1. **ByteBuffer strategy** — keep `NIOCore` baseline (Option A).
+           Trait-gate only the NIOPosix-based listener.
+        2. **Public API NIO leakage** — replace with transport-agnostic
+           types. README is updated alongside the spec. Treated as a
+           breaking change.
+        3. **Swift 6.2 bump** — accepted; the next version is breaking
+           regardless.
+        4. **Next step** — revise the spec to v1.1 (this revision is the
+           successor work; no implementation yet).
+
+        ## Next actions
+
+        - Draft `llm_prompts/features/001.1-netimpl-bsd-socket.xml` (spec
+          v1.1) incorporating F1–F5 decisions, including a sketch of the
+          `NFSTransportImplementation` protocol surface and the revised
+          public API for `NFSServerListener` (`boundAddress` replacement,
+          NIO-config injection slot).
+        - Once spec v1.1 is approved by the user, update `README.md` §2
+          (toolchain bump) and §4 (API), then begin implementation.
+    </report>
+    <note>
+        # Items deferred until spec v1.1
+
+        - Exact shape of `NFSTransportImplementation` (accept loop,
+          framing API, address surface).
+        - Whether `NFSTransport.custom` keeps `Equatable` (and on what
+          basis) or whether the enum drops `Equatable` entirely.
+        - How NIO-specific configuration (e.g. user-provided
+          `EventLoopGroup`) is injected when the `nio` trait is enabled,
+          without leaking NIO types into the trait-agnostic surface.
+        - README §2 / §4 wording for the new transport selection model.
+
+        # Cross-references
+
+        - `CLAUDE.md` §6 — scope changes must update README before code.
+        - `CLAUDE.md` §0 — README is the higher authority; F3's API change
+          flows README-first.
+    </note>
+</agent-task-report>
