@@ -8,6 +8,7 @@ This directory is a collection of task definitions for coding agents.
 
 - After completing a task, **you must write a report following the schema below**. (The report below is an example.)
     - Place the report at `$REPO_ROOT/llm_prompts/$TASK_FILE_NAME.execution-log.${YYYYMMDD}.xml`.
+    - **The report MUST be written in English**, regardless of the language used in the task definition or in the conversation with the user.
 
 ```
 <agent-task-report task="20420509-audit-rfc-reference.xml">
