@@ -426,14 +426,74 @@ struct NanoNFSDemo {
             logger.logLevel = .info
         }
 
+        let transportSelection = parseTransportArg(CommandLine.arguments)
+        let transport = try resolveTransport(transportSelection, logger: logger)
+
         let listener = NFSServerListener(
             server: DemoFS(),
             bind: .loopback(port: 14049),
+            transport: transport,
             logger: logger
         )
-        logger.info("Demo NFS server starting on 127.0.0.1:14049 (in-memory R/W)")
+        logger.info("Demo NFS server starting on 127.0.0.1:14049 (in-memory R/W, transport=\(transportSelection.label))")
         logger.info("Mount with: mount_nfs -o vers=4,port=14049,mountport=14049,tcp,rsize=1048576,wsize=1048576,dsize=1048576,actimeo=30,noatime,async 127.0.0.1:/ ~/nanonfs_test")
         logger.info("Set LOG_LEVEL=debug to trace failing COMPOUND ops.")
+        logger.info("Pick the transport with --transport=nio (default) or --transport=bsdSocket.")
         try await listener.run()
+    }
+}
+
+private enum TransportSelection {
+    case auto
+    case nio
+    case bsdSocket
+
+    var label: String {
+        switch self {
+        case .auto: return "default"
+        case .nio: return "nio"
+        case .bsdSocket: return "bsdSocket"
+        }
+    }
+}
+
+private func parseTransportArg(_ argv: [String]) -> TransportSelection {
+    for arg in argv.dropFirst() {
+        if arg == "--transport=nio" { return .nio }
+        if arg == "--transport=bsdSocket" || arg == "--transport=bsdsocket" { return .bsdSocket }
+    }
+    return .auto
+}
+
+private func resolveTransport(_ selection: TransportSelection, logger: Logger) throws -> NFSTransport {
+    switch selection {
+    case .auto:
+        return .default
+    case .nio:
+        #if NIO
+        return .nio()
+        #else
+        logger.error("--transport=nio requested but the NIO trait is disabled in this build.")
+        throw DemoError.transportNotAvailable("nio")
+        #endif
+    case .bsdSocket:
+        #if BSDSOCKET
+        return .bsdSocket
+        #else
+        logger.error("--transport=bsdSocket requested but the BSDSocket trait is disabled in this build.")
+        logger.error("Rebuild with: swift run --traits BSDSocket NanoNFSDemo --transport=bsdSocket")
+        throw DemoError.transportNotAvailable("bsdSocket")
+        #endif
+    }
+}
+
+private enum DemoError: Error, CustomStringConvertible {
+    case transportNotAvailable(String)
+
+    var description: String {
+        switch self {
+        case .transportNotAvailable(let name):
+            return "transport \(name) is not available in this build"
+        }
     }
 }
