@@ -80,12 +80,21 @@ struct RPCRecordMarkingDecoder {
 
         // Consume the header.
         input.moveReaderIndex(forwardBy: 4)
+        let wasAccumulating = pendingFragments.readableBytes > 0
         if length > 0 {
             guard var slice = input.readSlice(length: Int(length)) else {
                 // Should not happen — we just verified availability.
                 return .error(.truncatedFragment)
             }
-            pendingFragments.writeBuffer(&slice)
+            if wasAccumulating {
+                pendingFragments.writeBuffer(&slice)
+            } else if last {
+                return .message(slice)
+            } else {
+                // Avoid copying the first fragment. ByteBuffer slices share
+                // storage safely; later fragments append only if needed.
+                pendingFragments = slice
+            }
         }
 
         if last {

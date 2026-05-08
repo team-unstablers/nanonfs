@@ -552,7 +552,7 @@ private func encodeReaddirBody(list: NFSDirList,
         let entryFh = entry.fileHandle ?? parentFh
         let (mask, vals) = encodeFattr4(stat: stat, fileHandle: entryFh, request: attrRequest)
         mask.encode(into: &enc)
-        enc.writeVariableOpaque(Data(vals.readableBytesView))
+        enc.writeVariableOpaque(vals)
     }
     enc.writeBool(false)         // no more entries
     enc.writeBool(list.eof)

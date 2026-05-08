@@ -85,11 +85,27 @@ struct XDREncoder {
         }
     }
 
+    mutating func writeFixedOpaque(_ bytes: ByteBuffer) {
+        let count = bytes.readableBytes
+        var copy = bytes
+        buffer.writeBuffer(&copy)
+        let pad = xdrPadCount(for: count)
+        if pad > 0 {
+            buffer.writeRepeatingByte(0, count: pad)
+        }
+    }
+
     /// RFC 4506 §4.10 — variable-length opaque: length (UInt32) + bytes + zero pad.
     mutating func writeVariableOpaque(_ data: Data) {
         precondition(data.count <= UInt32.max, "XDR variable opaque exceeds UInt32.max")
         writeUInt32(UInt32(data.count))
         writeFixedOpaque(data)
+    }
+
+    mutating func writeVariableOpaque(_ bytes: ByteBuffer) {
+        precondition(bytes.readableBytes <= Int(UInt32.max), "XDR variable opaque exceeds UInt32.max")
+        writeUInt32(UInt32(bytes.readableBytes))
+        writeFixedOpaque(bytes)
     }
 
     mutating func writeVariableOpaque(_ bytes: some Collection<UInt8>) {
@@ -100,7 +116,7 @@ struct XDREncoder {
 
     /// RFC 4506 §4.11 — string is a variable-length opaque of UTF-8 bytes.
     mutating func writeString(_ s: String) {
-        writeVariableOpaque(Data(s.utf8))
+        writeVariableOpaque(s.utf8)
     }
 
     /// Reserve a UInt32 slot at the current write position and return its

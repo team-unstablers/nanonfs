@@ -344,6 +344,6 @@ func encodeGetattrResult(stat: NFSStat,
     let (mask, attrVals) = encodeFattr4(stat: stat, fileHandle: fileHandle, request: request)
     var out = XDREncoder()
     mask.encode(into: &out)
-    out.writeVariableOpaque(Data(attrVals.readableBytesView))
+    out.writeVariableOpaque(attrVals)
     return out.buffer
 }
