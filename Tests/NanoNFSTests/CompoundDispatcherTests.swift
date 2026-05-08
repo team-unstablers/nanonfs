@@ -164,7 +164,7 @@ private struct DecodedCompoundResponse {
 
 // MARK: - Tests
 
-@Suite("COMPOUND dispatcher (RFC 7530 §16.2)")
+@Suite("COMPOUND dispatcher (RFC 7530 §15.2)")
 struct CompoundDispatcherTests {
 
     private func makeDispatcher() -> CompoundDispatcher {
@@ -323,7 +323,7 @@ struct CompoundDispatcherTests {
     func notImplemented() async throws {
         let dispatcher = makeDispatcher()
         let args = makeCompoundArgs(tag: "", ops: [
-            // OPENATTR is intentionally not supported (RFC 7530 §16.19, but
+            // OPENATTR is intentionally not supported (RFC 7530 §16.17, but
             // nanonfs scope excludes named-attributes per README).
             (.openattr, opPayloadEmpty()),
         ])

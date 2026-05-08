@@ -81,7 +81,7 @@ func decodeSetattrPatch(from dec: inout XDRDecoder) throws -> SetattrDecoded {
     return SetattrDecoded(patch: patch, attrsSet: AttrBitmap(emitted))
 }
 
-/// `settime4` (RFC 7530 §5.9):
+/// `settime4` (RFC 7530 §2.2.3):
 ///   union switch (time_how4 set_it) {
 ///     case SET_TO_SERVER_TIME: void;
 ///     case SET_TO_CLIENT_TIME: nfstime4 time;

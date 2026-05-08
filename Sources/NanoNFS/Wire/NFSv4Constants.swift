@@ -1,6 +1,6 @@
 import Foundation
 
-// RFC 7530 §16.1 — operation opcodes (`nfs_opnum4`).
+// RFC 7530 §14.4 / §16 — operation opcodes (`nfs_opnum4`).
 enum NFSOp: UInt32 {
     case access            = 3
     case close             = 4

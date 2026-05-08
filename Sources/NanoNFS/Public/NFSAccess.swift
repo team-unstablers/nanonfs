@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - Access (RFC 7530 §16.3 ACCESS)
+// MARK: - Access (RFC 7530 §16.1 ACCESS)
 
 public struct NFSAccess: OptionSet, Sendable, Hashable {
     public let rawValue: UInt32
@@ -44,11 +44,11 @@ public enum NFSDelegationHint: Sendable, Hashable {
     case any
 }
 
-// MARK: - Open / Lock owner (RFC 7530 §3.3.6 / §8.1.2)
+// MARK: - Open / Lock owner (RFC 7530 §2.2.13 open_owner4 / §2.2.14 lock_owner4)
 
 public struct NFSOpenOwner: Hashable, Sendable {
     public var clientid: UInt64
-    /// ≤ 1024 bytes opaque per RFC 7530 §16.16.
+    /// `opaque<NFS4_OPAQUE_LIMIT>` per RFC 7530 §2.2.13 (NFS4_OPAQUE_LIMIT = 1024 in RFC 7531).
     public var owner: Data
 
     public init(clientid: UInt64, owner: Data) {

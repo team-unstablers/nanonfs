@@ -1,7 +1,8 @@
 import Foundation
 import Atomics
 
-// RFC 7530 §16.33-§16.35 — clientid lifecycle.
+// RFC 7530 §16.33-§16.34 (SETCLIENTID / SETCLIENTID_CONFIRM) + §16.28 (RENEW)
+// — clientid lifecycle.
 //
 // SETCLIENTID:         client introduces itself with (verifier, owner string,
 //                      callback program/addr). Server returns a clientid +

@@ -2,7 +2,7 @@ import Foundation
 import Logging
 import NIOCore
 
-// RFC 7530 §16.2 — COMPOUND.
+// RFC 7530 §15.2 — COMPOUND (Procedure 1).
 //
 // COMPOUND4args:  utf8str_cs tag; uint32 minorversion; nfs_argop4 argarray<>;
 // COMPOUND4res:   nfsstat4 status; utf8str_cs tag;     nfs_resop4 resarray<>;
@@ -19,7 +19,7 @@ struct CompoundState {
     /// Minor version negotiated from the request (`COMPOUND4args.minorversion`).
     /// nanonfs only supports 0.
     var minorVersion: UInt32 = 0
-    /// Tag echoed back into the response (RFC 7530 §16.2.4).
+    /// Tag echoed back into the response (RFC 7530 §15.2.4).
     var tag: String = ""
 }
 
@@ -50,7 +50,7 @@ final class CompoundDispatcher: Sendable {
         let minor: UInt32
         let opCount: UInt32
         do {
-            // RFC 7530 §16.2.4: tag has no length cap in the RFC, but we cap
+            // RFC 7530 §15.2.4: tag has no length cap in the RFC, but we cap
             // for safety; servers MAY truncate to a "reasonable" length.
             tag   = try dec.readString(maxLength: 4096)
             minor = try dec.readUInt32()
@@ -61,7 +61,7 @@ final class CompoundDispatcher: Sendable {
         }
 
         if minor != 0 {
-            // RFC 7530 §16.2.5 — minorversion mismatch.
+            // RFC 7530 §15.2.4 — minorversion mismatch.
             return encodeCompoundEarlyError(.minorVersMismatch, tag: tag)
         }
 
@@ -146,7 +146,7 @@ final class CompoundDispatcher: Sendable {
         case .renew:        return await opRenew(dec: &dec)
         case .secinfo:      return opSecinfo(dec: &dec)
         case .putpubfh:
-            // We don't run a public filehandle — RFC 7530 §16.20.
+            // We don't run a public filehandle — RFC 7530 §16.21 (PUTPUBFH).
             return OpResult(status: .notsupp, body: ByteBuffer())
         default:
             // Skeleton phase: every other op replies NFS4ERR_NOTSUPP. The
@@ -162,7 +162,7 @@ final class CompoundDispatcher: Sendable {
     }
 }
 
-// MARK: - Filehandle ops (RFC 7530 §16.20-§16.31)
+// MARK: - Filehandle ops (RFC 7530 §16.8 GETFH, §16.20-§16.22 PUTFH/PUTPUBFH/PUTROOTFH, §16.29-§16.30 RESTOREFH/SAVEFH)
 
 extension CompoundDispatcher {
     fileprivate func opPutRootFH(state: inout CompoundState) async -> OpResult {
@@ -181,7 +181,7 @@ extension CompoundDispatcher {
     fileprivate func opPutFH(dec: inout XDRDecoder,
                              state: inout CompoundState) async -> OpResult {
         do {
-            // RFC 7530 §2.2.4: nfs_fh4 is variable-length opaque ≤ NFS4_FHSIZE (128).
+            // RFC 7530 §2.1 (Table 1): nfs_fh4 is variable-length opaque ≤ NFS4_FHSIZE (128).
             let bytes = try dec.readVariableOpaqueData(maxLength: 128)
             state.currentFh = NFSFileHandle(bytes)
             return OpResult(status: .ok, body: ByteBuffer())
@@ -209,7 +209,7 @@ extension CompoundDispatcher {
 
     fileprivate func opRestoreFH(state: inout CompoundState) -> OpResult {
         guard let fh = state.savedFh else {
-            // RFC 7530 §16.30 — RESTOREFH without prior SAVEFH.
+            // RFC 7530 §16.29 — RESTOREFH without prior SAVEFH.
             return OpResult(status: .restorefh, body: ByteBuffer())
         }
         state.currentFh = fh
@@ -233,7 +233,7 @@ extension CompoundDispatcher {
         }
         do {
             let granted = try await server.access(handle: fh, mask: NFSAccess(rawValue: mask))
-            // RFC 7530 §16.3.3 — supported (==mask) + access (granted subset).
+            // RFC 7530 §16.1.3 — supported (==mask) + access (granted subset).
             var enc = XDREncoder()
             enc.writeUInt32(mask)            // supported
             enc.writeUInt32(granted.rawValue) // access
@@ -250,7 +250,7 @@ extension CompoundDispatcher {
                               state: inout CompoundState) async -> OpResult {
         let name: String
         do {
-            // RFC 7530 §16.13.1 — component4 string. Name length capped here
+            // RFC 7530 §16.13.4 — component4 string. Name length capped here
             // for safety; specific cap enforced by user via .nameTooLong.
             name = try dec.readString(maxLength: 1 << 16)
         } catch {
@@ -288,7 +288,7 @@ extension CompoundDispatcher {
     }
 
     fileprivate func opRenew(dec: inout XDRDecoder) async -> OpResult {
-        // RFC 7530 §16.27 — RENEW(clientid4 client).
+        // RFC 7530 §16.28 — RENEW(clientid4 client).
         let clientid: UInt64
         do {
             clientid = try dec.readUInt64()
@@ -304,7 +304,7 @@ extension CompoundDispatcher {
     }
 }
 
-// MARK: - GETATTR (RFC 7530 §16.18)
+// MARK: - GETATTR (RFC 7530 §16.7)
 
 extension CompoundDispatcher {
     fileprivate func opGetattr(dec: inout XDRDecoder,
@@ -331,7 +331,7 @@ extension CompoundDispatcher {
     }
 }
 
-// MARK: - SETCLIENTID family (RFC 7530 §16.33-§16.35)
+// MARK: - SETCLIENTID family (RFC 7530 §16.33-§16.34)
 
 extension CompoundDispatcher {
     fileprivate func opSetClientId(dec: inout XDRDecoder) async -> OpResult {
@@ -401,8 +401,9 @@ extension CompoundDispatcher {
 
 extension NFSStatus {
     /// nanonfs maps an expired-lease registry result onto the closest RFC
-    /// status. RFC 7530 §13.1 lists `expired` only for stateid; for clientid
-    /// the analogous status is `STALE_CLIENTID`.
+    /// status. RFC 7530 §13.1.5.3 lets `NFS4ERR_EXPIRED` apply to either a
+    /// stateid or a clientid, but for clientid expiry RENEW typically returns
+    /// the more specific `NFS4ERR_STALE_CLIENTID` (§13.1.10.2).
     static let expired: NFSStatus = .staleClientid
 }
 
@@ -536,7 +537,7 @@ private func encodeReaddirBody(list: NFSDirList,
     // backwards compatibility with callers that don't know about the field.
     for entry in list.entries {
         enc.writeBool(true)
-        // Use fileid as the cookie. RFC 7530 §16.24.3 lets the server pick
+        // Use fileid as the cookie. RFC 7530 §16.24.4 lets the server pick
         // any opaque cookie value; the only requirement is that re-feeding
         // it to a follow-up READDIR resumes after this entry. Until
         // `NFSDirEntry` exposes a per-entry cookie field, fileid is good
@@ -560,7 +561,7 @@ private func encodeReaddirBody(list: NFSDirList,
     return enc.buffer
 }
 
-/// Decode a `stateid4` (RFC 7530 §3.3.12).
+/// Decode a `stateid4` (RFC 7530 §2.2.16).
 private func decodeStateid(_ dec: inout XDRDecoder) throws -> NFSStateID {
     let seqid = try dec.readUInt32()
     let other = try dec.readFixedOpaqueData(count: 12)
@@ -579,7 +580,7 @@ private func encodeStateid(_ stateid: NFSStateID, into enc: inout XDREncoder) {
     enc.writeFixedOpaque(other)
 }
 
-// MARK: - READ / WRITE / COMMIT (RFC 7530 §16.23, §16.36, §16.5)
+// MARK: - READ / WRITE / COMMIT (RFC 7530 §16.23, §16.36, §16.3)
 
 extension CompoundDispatcher {
     fileprivate func opRead(dec: inout XDRDecoder,
@@ -643,7 +644,7 @@ extension CompoundDispatcher {
             var enc = XDREncoder()
             enc.writeUInt32(UInt32(result.count))
             enc.writeUInt32(result.committed.rawValue)
-            // writeverf is 8-byte opaque per RFC 7530 §3.3.13.
+            // writeverf is verifier4 (8-byte opaque) per RFC 7530 §2.1 / §16.36.3.
             enc.writeUInt64(result.writeVerifier)
             return OpResult(status: .ok, body: enc.buffer)
         } catch let error as NFSError {
@@ -655,7 +656,7 @@ extension CompoundDispatcher {
     }
 
     fileprivate func opReleaseLockowner(dec: inout XDRDecoder) -> OpResult {
-        // RFC 7530 §16.31 — release_lockowner4 args = lock_owner4 (clientid + opaque).
+        // RFC 7530 §16.37 — release_lockowner4 args = lock_owner4 (clientid + opaque).
         // Library-internal: we acknowledge so the kernel can reuse the
         // lockowner string. Per-server bookkeeping is added with LOCK ops.
         do {
@@ -696,7 +697,7 @@ extension CompoundDispatcher {
     }
 }
 
-// MARK: - CREATE / REMOVE / RENAME / LINK (RFC 7530 §16.7, §16.27, §16.28, §16.9)
+// MARK: - CREATE / REMOVE / RENAME / LINK (RFC 7530 §16.4, §16.26, §16.27, §16.9)
 
 extension CompoundDispatcher {
     /// CREATE handles non-regular file types only — regular files go through
@@ -851,7 +852,7 @@ extension CompoundDispatcher {
     }
 }
 
-/// Encode an opportunistic `change_info4` (RFC 7530 §3.3.5) — atomic=false,
+/// Encode an opportunistic `change_info4` (RFC 7530 §2.2.9) — atomic=false,
 /// before/after = current real-time monotonic counter. nanonfs does not yet
 /// track per-directory change ids, so before == after; clients that care
 /// about strict atomicity should not rely on the value being conservative.
@@ -862,7 +863,7 @@ private func encodeChangeInfo(_ enc: inout XDREncoder) {
     enc.writeUInt64(now)
 }
 
-// MARK: - OPEN family (RFC 7530 §16.16-§16.18, §16.4)
+// MARK: - OPEN family (RFC 7530 §16.2 CLOSE, §16.16 OPEN, §16.18 OPEN_CONFIRM, §16.19 OPEN_DOWNGRADE)
 
 extension CompoundDispatcher {
     fileprivate func opOpen(dec: inout XDRDecoder,
@@ -1035,7 +1036,7 @@ extension CompoundDispatcher {
         do {
             try await server.close(handle: fh, stateid: stateid)
             var enc = XDREncoder()
-            // RFC 7530 §16.4.4 — server returns an updated stateid; nanonfs
+            // RFC 7530 §16.2.4 — server returns an updated stateid; nanonfs
             // bumps seqid to seqid+1 (mod 2^32, with 0 reserved).
             var bump = stateid
             bump.seqid = bump.seqid &+ 1
@@ -1062,7 +1063,7 @@ private func patchAttrs(_ p: NFSAttributesPatch) -> [FATTR4] {
     return out
 }
 
-/// Encode an `open_delegation4` (RFC 7530 §16.16.5).
+/// Encode an `open_delegation4` (RFC 7530 §16.16.3).
 private func encodeOpenDelegation(_ grant: NFSDelegationGrant,
                                   into enc: inout XDREncoder) {
     switch grant {
@@ -1085,7 +1086,7 @@ private func encodeOpenDelegation(_ grant: NFSDelegationGrant,
 }
 
 /// "EVERYONE@ ALLOWED full" ACE — sent as the `permissions` field of read /
-/// write delegation grants (RFC 7530 §5.11).
+/// write delegation grants (RFC 7530 §16.16.3, with EVERYONE@ semantics in §6.2.1.5.1).
 private func encodeDefaultAce(into enc: inout XDREncoder) {
     enc.writeUInt32(0)            // type = ACE4_ACCESS_ALLOWED
     enc.writeUInt32(0)            // flag
@@ -1299,6 +1300,6 @@ private func encodeCompoundEarlyError(_ status: NFSStatus, tag: String) -> ByteB
     var enc = XDREncoder()
     enc.writeUInt32(status.rawValue)
     enc.writeString(tag)
-    enc.writeUInt32(0) // empty resarray — RFC 7530 §16.2.5
+    enc.writeUInt32(0) // empty resarray — RFC 7530 §15.2.4
     return enc.buffer
 }

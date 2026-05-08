@@ -47,7 +47,7 @@ func handleSingleRpcMessage(
                                     progMismatchHigh: NFSProgram.version)
     }
 
-    // RFC 7530 §3.2.1 + nanonfs scope: AUTH_SYS only. AUTH_NONE is allowed
+    // RFC 7530 §3.2 + nanonfs scope: AUTH_SYS only. AUTH_NONE is allowed
     // for the NULL procedure (servers SHOULD accept it for ping); GSS we
     // reject outright.
     let flavor = header.credential.flavor

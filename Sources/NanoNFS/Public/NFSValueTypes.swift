@@ -1,11 +1,11 @@
 import Foundation
 
-// MARK: - File handle (RFC 7530 §2.2.4 / §16.x)
+// MARK: - File handle (RFC 7530 §2.1 nfs_fh4 / §16.x)
 
 /// NFSv4 variable-length opaque file handle.
 /// The server is the sole authority on its contents — clients must treat it as opaque.
 public struct NFSFileHandle: Hashable, Sendable {
-    /// ≤ NFS4_FHSIZE (128) bytes per RFC 7530 §2.2.
+    /// ≤ NFS4_FHSIZE (128) bytes per RFC 7530 §2.1 (Table 1).
     public var bytes: Data
 
     public init(_ bytes: Data) {
@@ -13,12 +13,12 @@ public struct NFSFileHandle: Hashable, Sendable {
     }
 }
 
-// MARK: - State identifier (RFC 7530 §8.1.3)
+// MARK: - State identifier (RFC 7530 §2.2.16 / §9.1.4)
 
 /// NFSv4 stateid: (seqid, other[12]).
 public struct NFSStateID: Hashable, Sendable {
     public var seqid: UInt32
-    /// Exactly 12 bytes per RFC 7530 §8.1.3 / "NFS4_OTHER_SIZE".
+    /// Exactly 12 bytes per RFC 7530 §2.2.16 / "NFS4_OTHER_SIZE".
     public var other: Data
 
     public init(seqid: UInt32, other: Data) {
@@ -26,14 +26,14 @@ public struct NFSStateID: Hashable, Sendable {
         self.other = other
     }
 
-    /// All-zero stateid (RFC 7530 §8.1.4.2 — "anonymous stateid").
+    /// All-zero stateid (RFC 7530 §9.1.4.3 — "anonymous stateid").
     public static let anonymous = NFSStateID(seqid: 0, other: Data(repeating: 0, count: 12))
 
-    /// All-ones stateid (RFC 7530 §8.1.4.3 — "READ bypass stateid").
+    /// All-ones stateid (RFC 7530 §9.1.4.3 — "READ bypass stateid").
     public static let bypass = NFSStateID(seqid: .max, other: Data(repeating: 0xff, count: 12))
 }
 
-// MARK: - Time (RFC 7530 §2.2.4 nfstime4)
+// MARK: - Time (RFC 7530 §2.2.1 nfstime4)
 
 public struct NFSTime: Hashable, Sendable {
     public var seconds: Int64
@@ -52,7 +52,7 @@ public struct NFSTime: Hashable, Sendable {
     }
 }
 
-// MARK: - Object type (RFC 7530 §2.2.4 nfs_ftype4)
+// MARK: - Object type (RFC 7530 §2.1 nfs_ftype4)
 
 public enum NFSObjectType: UInt32, Sendable {
     case regularFile      = 1   // NF4REG

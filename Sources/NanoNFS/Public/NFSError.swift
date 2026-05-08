@@ -33,6 +33,6 @@ public enum NFSError: Error, Sendable {
     case staleStateid                           // NFS4ERR_STALE_STATEID = 10023
     case oldStateid                             // NFS4ERR_OLD_STATEID  = 10024
     case badStateid                             // NFS4ERR_BAD_STATEID  = 10025
-    case wrongType                              // NFS4ERR_WRONG_TYPE   = 10083 (RFC 7530 §13.1.1)
+    case wrongType                              // mapped to NFS4ERR_BADTYPE = 10007 (RFC 7530 §13.1.4.1)
     case serverFault                            // NFS4ERR_SERVERFAULT  = 10006
 }

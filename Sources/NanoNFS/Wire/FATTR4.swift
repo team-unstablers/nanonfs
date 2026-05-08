@@ -151,7 +151,7 @@ struct AttrBitmap: Sendable, Equatable {
 // MARK: - Server-wide constants
 
 enum FATTRConfig {
-    /// nanonfs's lease time (RFC 7530 §5.6 — LEASE_TIME, in seconds). The
+    /// nanonfs's lease time (RFC 7530 §5.8.1.11 — LEASE_TIME, in seconds). The
     /// client renews via RENEW within this window or its state is reaped.
     static let leaseSeconds: UInt32 = 60
 
@@ -175,7 +175,7 @@ enum FATTRConfig {
     static let spaceFreeBytes:  UInt64 = 1 << 40
 
     /// All attributes nanonfs is willing to serve. Any GETATTR mask outside
-    /// this set is silently dropped from the response (RFC 7530 §16.18 —
+    /// this set is silently dropped from the response (RFC 7530 §16.7 —
     /// servers MAY omit unsupported attributes).
     static let supported: AttrBitmap = AttrBitmap([
         .supportedAttrs, .type, .fhExpireType, .change, .size,
@@ -220,7 +220,7 @@ func encodeFattr4(stat: NFSStat,
         case .fhExpireType:
             values.writeUInt32(FATTRConfig.fhExpireType)
         case .change:
-            // RFC 7530 §5.7: `changeid4` opaque monotonically-increasing.
+            // RFC 7530 §5.8.1.4 (change attr) / §2.1 changeid4: monotonically-increasing.
             // We synthesize from mtime since we don't track per-file change
             // counters yet — sufficient for clients that compare equality.
             let chg = UInt64(bitPattern: stat.mtime.seconds) &* 1_000_000_000
@@ -321,7 +321,7 @@ func encodeFattr4(stat: NFSStat,
     return (AttrBitmap(emitted), values.buffer)
 }
 
-/// Encode an `nfstime4` (RFC 7530 §2.2.4): int64 seconds + uint32 nseconds.
+/// Encode an `nfstime4` (RFC 7530 §2.2.1): int64 seconds + uint32 nseconds.
 func encodeNFSTime(_ t: NFSTime, into enc: inout XDREncoder) {
     enc.writeInt64(t.seconds)
     enc.writeUInt32(t.nseconds)

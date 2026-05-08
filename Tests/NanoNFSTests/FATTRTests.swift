@@ -4,7 +4,7 @@ import NIOCore
 import Testing
 @testable import NanoNFS
 
-@Suite("FATTR4 + GETATTR (RFC 7530 §5, §16.18)")
+@Suite("FATTR4 + GETATTR (RFC 7530 §5, §16.7)")
 struct FATTRTests {
 
     @Test("AttrBitmap round-trip preserves attribute set")

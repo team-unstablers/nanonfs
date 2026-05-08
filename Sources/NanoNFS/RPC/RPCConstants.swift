@@ -55,7 +55,8 @@ enum RPCAuthFlavor: UInt32 {
     case rpcsecGSS = 6  // RPCSEC_GSS
 }
 
-/// NFSv4 program identification (RFC 7530 §1.4).
+/// NFSv4 program identification (RFC 7530 §3.1 + §14; program number 100003 is
+/// IANA-registered, the version-4 protocol is defined in §14-§16).
 enum NFSProgram {
     static let number:  UInt32 = 100_003
     static let version: UInt32 = 4
@@ -67,7 +68,8 @@ enum NFSProcedure: UInt32 {
     case compound = 1   // NFSPROC4_COMPOUND
 }
 
-/// NFSv4 program callback identification (RFC 7530 §1.4).
+/// NFSv4 program callback identification (RFC 7530 §14 + §16.33 — the callback
+/// program number is per-client and is announced via SETCLIENTID).
 enum NFSCallbackProgram {
     static let version: UInt32 = 1
     // Program number is per-client (chosen via SETCLIENTID).
