@@ -276,11 +276,14 @@ func encodeFattr4(stat: NFSStat,
         case .numLinks:
             values.writeUInt32(stat.nlink)
         case .owner:
-            // RFC 7530 §5.9: utf8str_mixed of form "user@domain". macOS's
-            // NFS client accepts numeric "uid@nanonfs" strings without DNS.
-            values.writeString("\(stat.uid)@nanonfs")
+            // RFC 7530 §5.9: utf8str_mixed, 보통 "user@domain". 다만 도메인이
+            // client 의 default_nfs4domain 과 mismatch 면 macOS 가 owner 를
+            // nobody 로 떨어뜨려 git 등의 owner-check 가 깨진다. 도메인 없는
+            // 순수 숫자 문자열을 보내면 macOS NFS client 가 곧장 numeric uid
+            // 로 해석하므로 (idmapper bypass), 이쪽이 안전하다.
+            values.writeString("\(stat.uid)")
         case .ownerGroup:
-            values.writeString("\(stat.gid)@nanonfs")
+            values.writeString("\(stat.gid)")
         case .rawDev:
             let dev = stat.rdev ?? .init(major: 0, minor: 0)
             values.writeUInt32(dev.major)
