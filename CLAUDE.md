@@ -1,37 +1,50 @@
-# CLAUDE.md — nanonfs 작업 지침
+# CLAUDE.md — nanonfs working spec
 
-> 이 문서는 Claude Code (및 그 외 AI 코딩 보조) 가 본 저장소에서 작업할 때 따라야 하는 규약을 정합니다.
-> **본 저장소는 한 번에 끝나는 프로젝트가 아니라 여러 세션에 걸쳐 점진적으로 구현됩니다.** Claude Code 는 이 문서를 *장기 메모리* 로 활용하며, **세션이 끝날 때 §6 작업 로그를 갱신**해야 합니다.
-
----
-
-## 0. 1차 출처
-
-본 저장소에서 가장 강력한 권위 순서:
-
-1. **`README.md`** — 외부 동작 / 공개 API / 지원 범위의 정본.
-2. **`docs/rfc7530.txt`** — NFSv4.0 와이어 프로토콜의 정본.
-3. **`CLAUDE.md`** (이 문서) — 구현 / 작업 규약.
-4. 코드 자체.
-
-이 순서에 충돌이 있으면 **위쪽이 이깁니다**. 단, 코드와 README 가 어긋나는 것을 발견하면 그것을 *문제로 인식하고 사용자에게 보고* — 멋대로 한쪽으로 맞추지 말 것.
-
-`docs/rfc7530.txt` 는 라이브러리 빌드에 포함되지 않는 참조용 텍스트입니다. 와이어 동작에 영향을 주는 결정 (op 의미·필드 순서·에러 코드 등) 을 할 때마다 RFC 의 해당 섹션을 인용해 주석 또는 PR 설명에 남겨주세요. "RFC 7530 §16.18 (READ)" 같은 식.
+> This document is the working spec that AI coding assistants (Claude Code et al.) and the human maintainer follow when operating on this repository.
+> **nanonfs is incremental, not a one-shot project — it accumulates across sessions.** Treat this file as long-term memory and **update §7 (work log) at the end of every session**.
 
 ---
 
-## 1. 디렉토리 / 모듈 구조 규약
+## 0. Authoritative sources
+
+The order of authority within this repository:
+
+1. **`README.md`** — source of truth for external behavior, public API, and supported scope.
+2. **`docs/rfc7530.txt`** — source of truth for the NFSv4.0 wire protocol.
+3. **`CLAUDE.md`** (this document) — implementation and process rules.
+4. The code itself.
+
+Higher items win on conflict. However, when the code and `README.md` disagree, **report it to the user as a problem** rather than silently bending one to match the other.
+
+`docs/rfc7530.txt` is reference text and is not part of the library build. Whenever a decision affects wire behavior (op semantics, field ordering, error codes, etc.), cite the relevant RFC section in a code comment or PR description — e.g. `RFC 7530 §16.18 (READ)`.
+
+---
+
+<section id="agent-rules">
+
+# AGENT RULES
+
+## 1. Interaction & Language
+
+- If you are unsure about something or have questions while working, **prioritize asking the user to clarify rather than guessing**. Use `AskUserQuestion` liberally; over-asking is preferable to proceeding on shaky assumptions.
+- The maintainer is a Korean speaker. Conduct conversations and plan-mode writing in **Korean** unless explicitly instructed otherwise.
+- Free text addressed to the user is in Korean. Identifiers, code comments, and commit messages are written in a businesslike tone (English is the established convention in this repo) regardless of the conversation language.
+- When there is important project information or a major change, update this `CLAUDE.md` so the documentation reflects the latest state.
+- When you learn new facts during work (code behavior, RFC interpretations, external tool quirks, etc.), record them in §7 (work log) so future sessions can pick up the trail.
+- If you cannot proceed due to missing permissions, request elevation from the user. If a command fails due to insufficient permissions, escalate it to the user for approval rather than reaching for `--no-verify`/destructive shortcuts.
+
+## 2. Directory / module structure
 
 ```
 Sources/NanoNFS/
-├── Public/      # 공개 API. 외부에서 import 시 보이는 것 전부.
-├── Wire/        # NFSv4 op 처리, COMPOUND 디스패치, stateid·clientid·delegation 관리
-├── RPC/         # ONC RPC (RFC 5531). AUTH_SYS 파싱. 콜백 채널 RPC 클라이언트.
-├── XDR/         # XDR (RFC 4506) 인코더/디코더. 순수 함수 + 작은 reader/writer.
-└── Internal/    # logging, async helpers, file handle 매핑 등 도메인-중립 유틸
+├── Public/      # Public API. Everything that is visible when the module is imported.
+├── Wire/        # NFSv4 op handling, COMPOUND dispatch, stateid / clientid / delegation management
+├── RPC/         # ONC RPC (RFC 5531). AUTH_SYS parsing. Callback-channel RPC client.
+├── XDR/         # XDR (RFC 4506) encoder / decoder. Pure functions plus small reader / writer.
+└── Internal/    # Domain-neutral utilities — logging, async helpers, file handle mapping, etc.
 ```
 
-### 의존 방향 (위→아래만 허용)
+### Allowed dependency direction (top → down only)
 
 ```
 Public  →  Wire  →  RPC  →  XDR
@@ -39,70 +52,73 @@ Public  →  Wire  →  RPC  →  XDR
                   Internal
 ```
 
-- **반대 방향 의존 금지.** 예: `XDR` 이 `RPC` 타입을 import 하면 안 됩니다. `RPC` 가 `Wire` 타입을 알면 안 됩니다.
-- **`Public/` 는 다른 폴더의 타입을 직접 노출하지 않습니다.** Wire/RPC/XDR 의 타입은 모두 `internal`. 공개에 필요하면 `Public/` 에 별도 타입을 두고 변환 레이어를 둡니다.
-- **XDR 레이어는 NFS 의미를 모릅니다.** `XDR` 안에는 `xdrEncode(uint32:)` 같은 일반 인코더만 둡니다. NFSv4 구조체 인코딩은 `RPC` 또는 `Wire` 가 XDR 프리미티브를 조립해서 만듭니다.
-- **Wire 레이어가 NFSServer 호출의 유일한 진입점.** `Public.NFSServerListener` 는 NIO 채널을 만들고 받은 메시지를 `Wire` 디스패처에 넘기기만 합니다.
+- **Reverse-direction imports are forbidden.** For example, `XDR` must not import any `RPC` type. `RPC` must not know about any `Wire` type.
+- **`Public/` does not directly expose types from other folders.** All Wire/RPC/XDR types are `internal`. When something must be public, place a separate type in `Public/` and add a translation layer.
+- **The XDR layer is unaware of NFS semantics.** `XDR` only contains generic encoders such as `xdrEncode(uint32:)`. NFSv4 struct encoding is composed in `RPC` or `Wire` from XDR primitives.
+- **The Wire layer is the sole entry point for `NFSServer` calls.** `Public.NFSServerListener` only creates a NIO channel and forwards received messages to the `Wire` dispatcher.
 
-레이어를 가로지르는 번잡함을 피하려고 손쉽게 의존 방향을 깨고 싶어질 수 있습니다 — **그러지 마세요**. 레이어 분리가 작동해야 NFSv3 추가나 ByteBuffer 오버로드 같은 미래 작업이 가능해집니다.
-
----
-
-## 2. 코딩 스타일 / Concurrency 규약
-
-- `swift-tools-version: 6.0`. **Swift 6 strict concurrency** 를 끄지 않습니다.
-- **모든 공개 타입은 `Sendable`**. 어쩔 수 없으면 `@unchecked Sendable` 을 쓰되 그 이유를 한 줄 주석으로 남깁니다.
-- `NFSServer` 구현체는 사용자가 만들지만 라이브러리 측 권장은 **`actor`**. 사용자 코드가 동시 호출에 안전하게 만드는 책임은 사용자에게 있습니다. 라이브러리 내부에서 사용자 메서드 호출을 직렬화하지 마세요.
-- 라이브러리 내부 상태 (clientid 테이블, stateid 발급, delegation 추적 등) 는 **각각 `actor`** 로 격리합니다. 단일 거대 actor 금지.
-- **`@MainActor` 사용 금지.** 본 라이브러리는 UI 가 없습니다.
-- 로깅은 항상 `swift-log` 를 통합니다. `print` / `NSLog` 금지. `Logger` 인스턴스는 `NFSServerListener` 에서 받은 것을 자식 컴포넌트에 명시적으로 전달.
-- 카운터 / 시퀀스 번호처럼 lockless 로 충분한 곳은 `swift-atomics` 를 씁니다.
-- `Foundation.Data` 는 페이로드 경계(`read`/`write`/file handle bytes) 에서만 사용. 핫패스 내부 (XDR 인코더 등) 에서는 `ByteBuffer` 를 우선합니다.
-- **에러는 `NFSError`** 또는 라이브러리 내부 에러 enum. POSIXError / NSError 가 사용자 메서드에서 throw 되면 Wire 레이어가 `NFS4ERR_SERVERFAULT` 로 변환합니다 — 사용자 메서드의 throw 시그니처를 강제하지는 않되, 매핑되지 않은 에러는 **반드시 logger.warning 으로 기록**합니다.
+It can be tempting to break the dependency direction in order to avoid cross-layer plumbing — **don't**. The layer separation is what enables future work like adding NFSv3 or `ByteBuffer` overloads.
 
 ---
 
-## 3. RFC 7530 참조 규약
+## 3. Coding style / Concurrency
 
-- 와이어 의미를 결정짓는 코드 (인코딩, op 디스패치, 에러 코드 매핑 등) 에는 **해당 RFC 섹션을 주석으로 인용**합니다.
+- `swift-tools-version: 6.0`. **Swift 6 strict concurrency** is not disabled.
+- **All public types are `Sendable`.** When unavoidable, use `@unchecked Sendable` and document the reason in a one-line comment.
+- The `NFSServer` implementation is provided by the user, but the library's recommendation is **`actor`**. Making user code safe against concurrent calls is the user's responsibility; the library does not serialize calls into user methods on its behalf.
+- Library-internal state (clientid table, stateid issuance, delegation tracking, etc.) is each isolated in **its own `actor`**. No single mega-actor.
+- **Do not use `@MainActor`.** This library has no UI.
+- Logging always goes through `swift-log`. `print` / `NSLog` are forbidden. The `Logger` instance received by `NFSServerListener` is passed explicitly to child components.
+- For places where lockless atomics suffice (counters, sequence numbers), use `swift-atomics`.
+- `Foundation.Data` is used only at payload boundaries (`read` / `write` / file handle bytes). Inside hot paths (XDR encoder etc.) `ByteBuffer` is preferred.
+- **Errors are `NFSError`** or library-internal error enums. If `POSIXError` / `NSError` is thrown from a user method, the Wire layer maps it to `NFS4ERR_SERVERFAULT` — the user's throw signature is not enforced, but unmapped errors **must be recorded with `logger.warning`**.
+
+---
+
+## 4. RFC 7530 reference policy
+
+- Code that determines wire semantics (encoding, op dispatch, error code mapping, etc.) **cites the relevant RFC section in a comment**:
   ```swift
   // RFC 7530 §16.23 (WRITE) — "If the COMMIT operation is not used,
   //  the server MAY still commit the data ..."
   ```
-- 사용자가 `docs/rfc7530.txt` 의 특정 섹션을 묻거나 인용하면 **반드시 그 섹션을 직접 읽고** 응답하세요. 기억에 의존하지 말 것.
-- RFC 와 README 가 충돌하면 **README 가 이깁니다 (지원 범위가 좁기 때문)** — 단, 그 사실을 PR 설명에 명시.
-- "이건 RFC 가 그렇게 말한다" 식으로 코드 결정을 변호할 때는 섹션 번호와 함께. 섹션 번호 없는 RFC 인용은 신뢰하지 마세요.
+- When the user references or quotes a specific section of `docs/rfc7530.txt`, **read that section directly** before responding. Do not rely on memory.
+- When the RFC and the README disagree, **the README wins (because the supported scope is narrower)** — but state the fact in the PR description.
+- When defending a code decision with "the RFC says so", always include the section number. RFC quotes without a section number are not to be trusted.
 
 ---
 
-## 4. 테스트 원칙
+## 5. Testing principles
 
-- 기본 프레임워크: **swift-testing** (`@Test`).
-- 단위 테스트 (XDR 인코더 / RPC 메시지 / Wire 디스패처) 는 mock 으로 충분.
-- **그러나** "이 라이브러리가 NFS 서버로서 동작한다" 의 검증은 **mock 만으로는 완결되지 않습니다**. 적어도 다음 형태의 *실제 mount 테스트* 가 한 종 이상 있어야 합니다:
-  - macOS `mount_nfs` 로 nanonfs 인스턴스를 마운트
-  - 마운트된 경로에 대한 일반 파일 시스템 호출 (`open`/`read`/`write`/`readdir`/`unlink`/`rename`/`flock`)
-  - 결과를 nanonfs 측 `NFSServer` 콜백 호출 흐름과 대조
-- 실제 mount 테스트는 **macOS 14+** 와 **루트 권한** 이 필요합니다. CI 가능 여부와 무관하게 **로컬에서 한 번이라도 실행 가능한 형태로** 두세요. 마운트 마운트포인트 / 정리 / cleanup 책임은 테스트 본인.
-- mount 테스트 작성을 미루기 위해 mock 기반 단위 테스트만 늘리는 패턴을 경계합니다 ("mock 으로 통과했는데 실제로 안 마운트되는" 사고가 NFS 류 라이브러리에서 가장 흔합니다).
-- 새 기능을 구현할 때마다, RFC 에서 인용한 동작 (예: COMMIT 의 verifier 변화 시 클라이언트가 재전송) 에 대한 시나리오 테스트를 적어도 하나 추가하세요.
-
----
-
-## 5. 사용자에게 묻기 / 결정 권한
-
-- **API / 와이어 동작에 대한 결정** 은 임의로 내리지 않습니다. README 에 명시된 범위를 넘어서는 결정 (새 메서드, 새 에러, 인자 추가/삭제) 은 사용자에게 묻고 README 와 본 문서를 먼저 갱신한 뒤 코드를 만집니다.
-- **README 와 어긋나는 코드** 를 발견하면 사용자에게 보고하고, 어느 쪽이 의도인지 확인. 멋대로 한쪽에 맞추지 말 것.
-- **새 의존성 추가** 는 사용자 승인 필수. 기본 허용된 의존성: `swift-nio`, `swift-log`, `swift-atomics`. 그 외는 묻기.
-- 사용자는 한국어 화자입니다. 사용자에게 보내는 자유 텍스트는 한국어, 식별자 / 코드 주석 / 커밋 메시지는 사무적인 톤 (영어 또는 한국어, 일관되게).
+- Default framework: **swift-testing** (`@Test`).
+- Unit tests (XDR encoders / RPC messages / Wire dispatcher) can rely on mocks.
+- **However**, "this library actually behaves as an NFS server" cannot be fully verified by mocks alone. There must be at least one *real mount test* of the following form:
+  - Mount a nanonfs instance via macOS `mount_nfs`.
+  - Issue ordinary file system calls against the mounted path (`open` / `read` / `write` / `readdir` / `unlink` / `rename` / `flock`).
+  - Cross-check the results against the `NFSServer` callback flow on the nanonfs side.
+- A real mount test requires **macOS 14+** and **root privileges**. Regardless of CI feasibility, **leave it runnable locally at least once**. Mount-point setup / cleanup is the test's own responsibility.
+- Beware the pattern of postponing the mount test by piling on more mock-based unit tests ("passed in mocks but doesn't actually mount" is the most common failure mode for NFS-class libraries).
+- For each new feature, add at least one scenario test against the behavior cited from the RFC (e.g. "client retransmits when COMMIT verifier changes").
 
 ---
 
-## 6. 작업 로그 (장기 메모리)
+## 6. Asking the user / decision authority
 
-> 새 세션이 시작되면 이 절을 먼저 읽어 현재 어디까지 와 있는지 파악하세요.
-> 세션을 끝낼 때 (또는 의미 있는 마일스톤 직후) **반드시 새 엔트리를 추가**하세요.
-> 형식: `### YYYY-MM-DD — 한 줄 제목`. 본문은 *무엇을* 했는지 + *왜* 그렇게 결정했는지 + *다음에 이어갈 것*.
+- **Decisions about API or wire behavior** are not made unilaterally. Decisions that exceed the scope stated in the README (new methods, new errors, addition / removal of arguments) must be confirmed with the user, and the README plus this document are updated *before* code is touched.
+- If you find code that is **inconsistent with the README**, report it to the user and confirm which side reflects the intent. Do not silently align one with the other.
+- **Adding a new dependency** requires user approval. Default-allowed dependencies: `swift-nio`, `swift-log`, `swift-atomics`. Anything else must be cleared with the user.
+
+</section>
+
+---
+
+## 7. Work log (long-term memory)
+
+> When a new session starts, read this section first to understand where the work currently stands.
+> When a session ends (or just after a meaningful milestone), **add a new entry without fail**.
+> Format: `### YYYY-MM-DD — One-line title`. Body: *what* was done + *why* it was decided that way + *what to pick up next*.
+>
+> Entries dated **2026-05-09** and onward are written in English. Entries dated 2026-05-08 and earlier are preserved in their original Korean — work-log entries are point-in-time records, so retroactive translation would erase nuance and is intentionally not performed.
 
 ### 2026-05-03 — 초기 스펙 확정
 
@@ -281,3 +297,14 @@ Public  →  Wire  →  RPC  →  XDR
   - `encodeGetattrResult` 와 READDIR entry attr encoding 에서 `ByteBuffer -> Data -> ByteBuffer` 재포장 제거.
 - 테스트: `swift test` 65개 전부 통과.
 - 남은 큰 병목: `NFSServer.read/write` 공개 API 가 `Data` 라서 WRITE 는 XDR payload 를 결국 Data 로 복사하고, READ 는 user Data 를 ByteBuffer 로 다시 복사한다. 이걸 없애려면 README/API 를 먼저 바꾸고 ByteBuffer 오버로드 또는 별도 fast-path protocol 을 추가해야 함.
+
+### 2026-05-09 — Public release prep + CLAUDE.md English translation
+
+- Repo prep for the upcoming public switch:
+  - Added a "vibe-coded with Claude Code" notice plus Noctiluca attribution at the top of both `README.md` and `README.ko.md` (commit `ac33205`). The Korean copy retained the user-supplied wording ("`[Noctiluca](https://noctiluca.app)` 의 오픈 소스 컴포넌트 중 하나이지만, 사용 전에는 충분한 내부 검증이 필요할 수도 있습니다."), the English copy was rephrased to match the same tone.
+  - Added a third-party content notice at the bottom of `LICENSE` clarifying that `docs/rfc7530.txt` is a verbatim IETF RFC under BCP 78 plus the IETF Trust's Legal Provisions, not under the nanonfs MIT license (commit `cc03a7e`).
+  - Settled on the recommended `mount_nfs` option set: `vers=4,port=$PORT,mountport=$PORT,tcp,rsize=1048576,wsize=1048576,dsize=1048576,actimeo=30,noatime,async`. Confirmed by the user that this option set, paired with a user-writable mount point such as `~/nanonfs_test`, allows both `mount_nfs` and `umount` to be invoked **without sudo** as the ordinary user that started the server. README §5.5 (both languages) and the demo `main.swift` comment + `logger.info` line were updated accordingly. The fact is also captured in agent memory under `nanonfs_mount_unprivileged.md`.
+  - Decided to keep the supported platform at **macOS 14+ only** even though the library proper has no Darwin-specific imports — only the integration test's raw socket helper imports `Darwin`. This preserves the README §1 narrative ("macFUSE alternative for macOS") and avoids committing to validation surfaces that have not been exercised.
+  - GitHub repo metadata plan (no auto-action taken): description = "Write a virtual file system in Swift with a FUSE-like callback API — mount it on macOS via the built-in NFS client, no kernel extensions."; website = `https://noctiluca.app`. Suggested topics: `nfs`, `nfsv4`, `swift`, `swift-package`, `macos`, `fuse`, `filesystem`, `loopback`.
+- Translated `CLAUDE.md` (§0 plus §1–§6) into English and introduced an explicit `# AGENT RULES` block. §1 is now an "Interaction & Language" section that codifies the existing global rules (ask-don't-guess, conduct conversations in Korean, escalate on permission failure, businesslike English in code/comments/commits). Older work-log entries (2026-05-03 / 2026-05-06 / 2026-05-08) are intentionally preserved verbatim in Korean — work-log entries are point-in-time records, retroactive translation would erase nuance.
+- **Next**: pick up Phase 2 candidates listed in the prior 2026-05-08 entry — most importantly the `NFSServer.read`/`write` `Data` ↔ `ByteBuffer` overload design (the remaining real copy on the WRITE/READ hot path) and CREATE symlink target / device rdev plumbing. CB_RECALL callback channel remains unimplemented and is required before delegations can be granted with anything other than `.none`.
