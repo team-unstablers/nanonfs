@@ -77,9 +77,13 @@ It can be tempting to break the dependency direction in order to avoid cross-lay
 
 ## 4. RFC 7530 reference policy
 
+- **Anti-hallucination rule (mandatory).** Before writing or editing code, comments, or work-log entries that include an `RFC 7530 §X` (or `§X.Y.Z`) citation, **look the section up directly in `docs/rfc7530.txt`** and confirm the cited number actually points at the content you mean. Do not rely on memory of section numbers, prior training data, or analogy to other NFS RFCs (5661 / 3530 — they renumber things). If you cannot positively verify the section, either grep the RFC for the relevant op / struct / error name first, or do not write the citation at all.
+  - **Common trap**: in RFC 7530, `§16.N` is *not* the same as op number N. Operation N (3 ≤ N ≤ 39) lives in `§16.(N-2)` (e.g. ACCESS = op 3 / §16.1, COMPOUND = procedure 1 / §15.2, GETATTR = op 9 / §16.7, READ = op 25 / §16.23, WRITE = op 38 / §16.36). The 2026-05-09 audit found dozens of citations that confused these two.
+  - **Common trap**: data types (`stateid4`, `nfstime4`, `change_info4`, `nfs_fh4`, `verifier4`, `open_owner4`, `lock_owner4`, etc.) are defined in `§2.1` (Table 1) or `§2.2.X`, not in `§3.3.X` or `§8.1.X`.
+  - **Common trap**: features that exist in NFSv4.1 (RFC 5661) but **not** in 7530 — e.g. `OPEN4_SHARE_ACCESS_WANT_*`, `NFS4ERR_WRONG_TYPE`, `SECINFO_NO_NAME`, `NFS4ERR_LOCK_NOTGRANTED` — must not be cited as 7530. If unsure, grep the 7530 text first.
 - Code that determines wire semantics (encoding, op dispatch, error code mapping, etc.) **cites the relevant RFC section in a comment**:
   ```swift
-  // RFC 7530 §16.23 (WRITE) — "If the COMMIT operation is not used,
+  // RFC 7530 §16.36 (WRITE) — "If the COMMIT operation is not used,
   //  the server MAY still commit the data ..."
   ```
 - When the user references or quotes a specific section of `docs/rfc7530.txt`, **read that section directly** before responding. Do not rely on memory.
