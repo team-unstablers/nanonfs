@@ -1,0 +1,229 @@
+<agent-task-report task="features/001.1-netimpl-bsd-socket.xml">
+    <agent>
+        <name>Claude Code</name>
+        <model>claude-opus-4-7</model>
+    </agent>
+    <executed-at>2026-05-09T07:00:00Z</executed-at>
+    <report>
+        # BSD socket transport (spec v1.1) — implementation report
+
+        ## Outcome
+
+        End-to-end implementation of `001.1-netimpl-bsd-socket.xml`. All nine
+        sub-objectives in the spec landed. Public API broke as planned (no
+        more `EventLoopGroup` / `SocketAddress` exposure). All three trait
+        configurations build and test cleanly:
+
+        - default (NIO only): 65 tests pass.
+        - NIO + BSDSocket: 68 tests pass (adds `BSDSocketTransportTests`).
+        - BSDSocket only (`--disable-default-traits --traits BSDSocket`):
+          68 tests pass — existing `Listener integration` and `Mount
+          simulation` suites run against `.bsdSocket` because that is
+          `NFSTransport.default` in this trait configuration.
+
+        Manual end-to-end smoke against `NanoNFSDemo --transport=bsdSocket`
+        accepts a raw RPC NULL CALL on `127.0.0.1:14049` and returns a
+        well-formed `msg_type=REPLY, reply_status=ACCEPTED,
+        accept_stat=SUCCESS` reply.
+
+        ## Order followed (per spec §"작업 순서")
+
+        1. Sub-objective approval — confirmed via `AskUserQuestion`:
+           full BSD impl (kqueue + per-connection driver), local-only build
+           matrix verification, demo gains a `--transport=bsdSocket` flag.
+        2. README.md and CLAUDE.md updates first (CLAUDE.md §6 / §0
+           README-first rule).
+        3. Then `Package.swift`, `Sources/NanoNFS/Public/`,
+           `Sources/NanoNFS/Transport/`, demo, tests.
+
+        ## Sub-objective coverage
+
+        ### §1 Public API: transport-agnostic listener
+
+        - New `Sources/NanoNFS/Public/NFSBoundAddress.swift` — `Sendable,
+          Hashable` `(host, port)` struct.
+        - `NFSServerListener.init` drops `eventLoopGroup`, gains
+          `transport: NFSTransport = .default`.
+        - `NFSServerListener.boundAddress` typed as `NFSBoundAddress?`.
+        - README §4.6 rewritten end-to-end.
+
+        ### §2 `NFSTransport` enum
+
+        - `Sources/NanoNFS/Public/NFSTransport.swift`. Cases:
+          `.nio(eventLoopGroup:)` (NIO trait), `.bsdSocket` (BSDSocket
+          trait), `.custom(any NFSTransportImplementation)`. Equatable
+          intentionally not synthesised.
+        - `NFSTransport.default` resolves to `.nio()` when both traits
+          are on, `.bsdSocket` when only that trait is on. The case where
+          neither trait is on is rejected at the package level by a top-
+          level `#error` directive.
+        - `NFSNIOEventLoopGroupBox` (NIO-only) for opt-in `EventLoopGroup`
+          injection — same trade-off as documented in spec §2.
+
+        ### §3 `NFSTransportImplementation` protocol + byte adapters
+
+        - Protocol in `NFSTransport.swift`. The closure parameters
+          (`onBind`, `connectionHandler`) are inlined as
+          `@escaping @Sendable` rather than carried by typealias —
+          typealiased function parameters in Swift default to non-escaping
+          and would prevent transports from capturing the closures into
+          child Tasks.
+        - `NFSAsyncByteStream` / `NFSAsyncByteWriter` in
+          `NFSAsyncBytes.swift`. Both closure-backed:
+          `NFSAsyncByteStream(next:)` takes an async-throws-returning
+          closure; `NFSAsyncByteWriter(write:finish:)` takes the two
+          obvious closures. Element type stays `NIOCore.ByteBuffer`
+          because `NIOCore` is the unconditional baseline.
+
+        ### §4 `NIOTransport` extracted
+
+        - `Sources/NanoNFS/Transport/NIOTransport.swift` (`#if NIO`).
+          Holds the prior `ServerBootstrap` / `executeThenClose` body
+          verbatim and adapts each accepted `NIOAsyncChannel` into a
+          `NFSAsyncByteStream` / `NFSAsyncByteWriter` pair. EventLoopGroup
+          ownership / shutdown logic preserved.
+        - The NIO inbound iterator is wrapped in an `@unchecked Sendable`
+          class (not an `actor`) because Swift 6 rejects mutating-async
+          calls on actor-isolated stored properties.
+
+        ### §5 `BSDSocketTransport` from scratch
+
+        - `Sources/NanoNFS/Transport/BSDSocketTransport.swift`
+          (`#if BSDSOCKET`). Pure Swift Concurrency on top of
+          `socket(2)` + `kqueue(2)` + `EVFILT_USER`. No GCD, no
+          Network.framework.
+
+        - **One key deviation from the spec sketch:** the spec pseudocode
+          ran the listener and per-connection `kevent(2)` blocking calls
+          *inside* a Swift Concurrency `Task`. That deadlocked the test
+          suite under parallel execution — eight tests × two blocking
+          sites per test saturated the eight-thread cooperative pool, so
+          per-connection Tasks could never run to feed the inbound stream.
+          A `sample(1)` confirmed every cooperative thread parked in
+          `kevent` / `recvfrom`.
+
+        - Resolution: blocking syscalls move off the cooperative pool.
+          - The listener's accept loop runs on a dedicated `Thread` (real
+            pthread). It yields accepted fds to an `AsyncStream<Int32>`.
+            Cancel arrives via `EVFILT_USER` from
+            `withTaskCancellationHandler.onCancel`.
+          - Each connection has its *own* dedicated `Thread` for the
+            inbound read loop. Each `EVFILT_READ` wakeup drains `read(2)`
+            to `EAGAIN` and yields chunks to an
+            `AsyncThrowingStream<ByteBuffer, Error>`, which the
+            cooperative consumer `Task` reads from.
+          - Outbound `write(2)` happens inline on the calling Task. The
+            common case (small RPC reply, kernel buffer not full) finishes
+            in one shot. On `EAGAIN` the writer briefly hops onto a
+            *one-shot* `Thread` to wait for `EVFILT_WRITE`, keeping the
+            cooperative pool unblocked.
+
+        - **Two kqueues per connection** (`readKq`, `writeKq`). Each
+          carries the same `EVFILT_USER` cancel ident, so a single
+          `ConnectionContext.cancel()` wakes both halves at once. Avoids
+          the subtle event-delivery edge cases of two threads calling
+          `kevent(2)` concurrently on the same kq.
+
+        - **`@_silgen_name("kevent")` thunk** — `Darwin.kevent(...)` is
+          ambiguous between the C struct `kevent` (initialiser) and the C
+          function. Without `import NIOPosix` to disambiguate, the
+          type-checker picks the struct initialiser and rejects the call.
+          Same trick swift-nio uses internally.
+
+        - This deviates only in the *Swift execution context* that runs
+          the kevent call, not in the syscall contract or cancellation
+          model. The spec's "kqueue 직행이 자연스럽다" intent is honoured.
+
+        ### §6 `Package.swift`
+
+        - `swift-tools-version: 6.2`.
+        - Two traits: `NIO` (default-enabled), `BSDSocket`. Default array
+          declared with `.default(enabledTraits: ["NIO"])`.
+        - Baseline products (`NIOCore`, `NIOFoundationCompat`, `Logging`,
+          `Atomics`) pulled unconditionally. `NIO` and `NIOPosix` gated on
+          the `NIO` trait via `condition: .when(traits: ["NIO"])`.
+        - `swiftSettings.define("NIO", .when(traits: ["NIO"]))` and
+          `define("BSDSOCKET", .when(traits: ["BSDSocket"]))` — same
+          across library, demo, test targets.
+
+        ### §7 README + CLAUDE.md + task_logs
+
+        - `README.md` §2 rewritten: toolchain bump, traits table, dependency
+          rules. §3 SYNOPSIS adds a `transport:` argument example. §4.6
+          rewritten end-to-end with the new types and a section on
+          `NFSTransportImplementation`.
+        - `CLAUDE.md` §2 directory layout adds `Transport/` with the
+          revised dependency-direction diagram. §3 gains a new "Trait
+          gating" subsection that codifies the file-level `#if` rule and
+          the baseline-vs-gated dependency policy.
+        - `task_logs/2026-05-09-bsdsocket-impl.md` written and linked from
+          the §7 index.
+
+        ### §8 Tests
+
+        - `BSDSocketTransportTests.swift` (trait-gated `#if BSDSOCKET`):
+          three scenarios — RPC NULL round-trip, 32 pipelined NULL RPCs
+          on a single connection, listener cancellation.
+        - Existing `Listener integration` and `Mount simulation` suites
+          adapted (just the `boundAddress` type change, `bound.port` no
+          longer optional). They run against `.nio()` under
+          `--traits NIO,BSDSocket` and `.bsdSocket` under
+          `--disable-default-traits --traits BSDSocket`.
+
+        ### §9 Out of scope
+
+        Honoured. No changes to `NFSServer` callbacks, no `ByteBuffer`
+        decoupling from XDR / RPC / Wire, no NFSv3 work, no external-
+        interface bind expansion.
+
+        ## Verified locally
+
+        - `swift build` — clean for default, `--traits BSDSocket
+          --disable-default-traits`, `--traits NIO,BSDSocket`.
+        - `swift test` (and the same with each trait combination) — all
+          tests pass.
+        - End-to-end NULL RPC against
+          `.build/.../NanoNFSDemo --transport=bsdSocket`.
+
+        ## Items deferred
+
+        - **`mount_nfs` against the BSDSocket build.** CLAUDE.md §5
+          requires at least one real mount test per major surface. The
+          NIO transport has the documented flow in README §5.5; the same
+          flow should be exercised against
+          `swift run --traits BSDSocket --disable-default-traits
+          NanoNFSDemo --transport=bsdSocket`. Not done in this session.
+        - **`ConnectionContext.cancel()` join races.** `close()`
+          busy-waits on the read thread finishing
+          (`while !t.isFinished { Thread.sleep(0.001) }`). Tests pass,
+          but a proper completion semaphore or `pthread_join` would be
+          cleaner.
+    </report>
+    <note>
+        # Cross-references
+
+        - Spec: `llm_prompts/features/001.1-netimpl-bsd-socket.xml`.
+        - Confirmation entry:
+          `task_logs/2026-05-09-bsdsocket-spec-v11.md`.
+        - This-session implementation log:
+          `task_logs/2026-05-09-bsdsocket-impl.md`.
+        - v1.0 validation findings (kept for trace):
+          `llm_prompts/features/001-netimpl-bsd-socket.execution-log.20260509.xml`.
+
+        # Behaviour notes worth capturing for future sessions
+
+        - The cooperative-thread-pool deadlock was only visible under
+          parallel test execution. Single-test runs of
+          `BSDSocketTransportTests` passed even with the original
+          "blocking kevent inside a Task" implementation. Future
+          regressions should run the full `swift test` suite (not
+          `--filter`) under `--traits BSDSocket --disable-default-traits`
+          to catch this.
+        - swift-nio's `NIOPosix` happens to be available transitively even
+          when the `NIO` trait is off (swiftpm resolves the package even
+          without a trait-conditional dependency on a specific product).
+          Tests that `import NIOPosix` therefore continue to compile under
+          `--traits BSDSocket --disable-default-traits`. Not a problem
+          today but worth knowing.
+    </note>
+</agent-task-report>
