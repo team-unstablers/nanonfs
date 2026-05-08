@@ -24,7 +24,7 @@ struct MountSimulationTests {
         let runTask = Task { try await listener.run() }
         let bound = try await waitForBind(listener: listener)
         defer { runTask.cancel() }
-        let port = UInt16(bound.port ?? 0)
+        let port = bound.port
 
         let conn = try TCPClient(host: "127.0.0.1", port: port)
         defer { conn.close() }
@@ -114,7 +114,7 @@ struct MountSimulationTests {
         #expect(payload == Data("Hello, NFS world!\n".utf8))
     }
 
-    private func waitForBind(listener: NFSServerListener) async throws -> SocketAddress {
+    private func waitForBind(listener: NFSServerListener) async throws -> NFSBoundAddress {
         let deadline = Date().addingTimeInterval(2.0)
         while Date() < deadline {
             if let a = await listener.boundAddress { return a }

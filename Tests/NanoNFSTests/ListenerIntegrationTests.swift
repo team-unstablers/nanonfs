@@ -27,7 +27,7 @@ struct ListenerIntegrationTests {
             runTask.cancel()
         }
 
-        let port = UInt16(bound.port ?? 0)
+        let port = bound.port
         #expect(port > 0)
 
         // Use a simple synchronous TCP socket from Foundation/POSIX rather
@@ -72,7 +72,7 @@ struct ListenerIntegrationTests {
         let runTask = Task { try await listener.run() }
         let bound = try await waitForBind(listener: listener, timeoutMs: 1500)
         defer { runTask.cancel() }
-        let port = UInt16(bound.port ?? 0)
+        let port = bound.port
 
         let sock = try TCPClient(host: "127.0.0.1", port: port)
         defer { sock.close() }
@@ -108,7 +108,7 @@ struct ListenerIntegrationTests {
         let runTask = Task { try await listener.run() }
         let bound = try await waitForBind(listener: listener, timeoutMs: 1500)
         defer { runTask.cancel() }
-        let port = UInt16(bound.port ?? 0)
+        let port = bound.port
 
         let sock = try TCPClient(host: "127.0.0.1", port: port)
         defer { sock.close() }
@@ -175,7 +175,7 @@ struct ListenerIntegrationTests {
         let runTask = Task { try await listener.run() }
         let bound = try await waitForBind(listener: listener, timeoutMs: 1500)
         defer { runTask.cancel() }
-        let port = UInt16(bound.port ?? 0)
+        let port = bound.port
 
         let sock = try TCPClient(host: "127.0.0.1", port: port)
         defer { sock.close() }
@@ -213,7 +213,7 @@ struct ListenerIntegrationTests {
 
     /// Polls listener.boundAddress until it is non-nil or the timeout fires.
     private func waitForBind(listener: NFSServerListener,
-                             timeoutMs: Int) async throws -> SocketAddress {
+                             timeoutMs: Int) async throws -> NFSBoundAddress {
         let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000.0)
         while Date() < deadline {
             if let addr = await listener.boundAddress { return addr }
