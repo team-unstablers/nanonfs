@@ -21,7 +21,7 @@ struct RPCOpaqueAuth: Sendable, Hashable {
     static let maxBodyLength: UInt32 = 400
 }
 
-/// AUTH_SYS credential body (RFC 5531 Appendix A.1).
+/// AUTH_SYS credential body (RFC 5531 Appendix A).
 ///
 /// struct authsys_parms {
 ///     unsigned int  stamp;
@@ -149,7 +149,7 @@ extension AuthSysCredential {
 
 /// Build a successful (MSG_ACCEPTED, SUCCESS) reply with `body` as the
 /// procedure-specific results. The verifier is AUTH_NONE, which is what
-/// AUTH_SYS expects for replies (RFC 5531 §8.2).
+/// AUTH_SYS expects for replies (RFC 5531 Appendix A).
 func rpcEncodeAcceptedReply(xid: UInt32,
                             verifier: RPCOpaqueAuth = .none,
                             results: ByteBuffer) -> ByteBuffer {

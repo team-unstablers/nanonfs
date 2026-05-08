@@ -1,0 +1,10 @@
+<agent-task lang="ko">
+    <objective>
+        # 레포지토리 내 모든 'RFC 5531' 문서에 대한 레퍼런스를 검증한다
+
+        - `CLAUDE.md`나 `README.md`, 그리고 소스 코드 내에서의 'RFC 5531 문서의 섹션 몇 / 몇 항 몇 조' 등을 참조하는 부분이 실제로 일치하는지, 할루시네이션이 아닌지 검증합니다.
+    </objective>
+    <see-also>
+        - docs/rfc5531.txt: RPCv2 스펙 문서
+    </see-also>
+</agent-task>

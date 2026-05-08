@@ -33,7 +33,7 @@ enum RPCRejectStatus: UInt32 {
     case authError   = 1
 }
 
-/// RFC 5531 §A.2 — auth_stat. Subset we actually use is documented inline.
+/// RFC 5531 §9 — auth_stat. Subset we actually use is documented inline.
 enum RPCAuthStatus: UInt32 {
     case ok            = 0
     case badcred       = 1

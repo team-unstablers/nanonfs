@@ -1,0 +1,130 @@
+<agent-task-report task="20260509-audit-rfc-reference.rfc5531.xml">
+    <agent>
+        <name>Claude Code</name>
+        <model>claude-opus-4-7[1m]</model>
+    </agent>
+    <executed-at>2026-05-09T00:00:00Z</executed-at>
+    <report>
+        # RFC 5531 reference audit results
+
+        ## Audit scope
+
+        Every `RFC 5531 §X` (and `RFC 5531 Appendix X`) citation in the
+        repository was located via `grep -rn "RFC 5531\|RFC5531\|rfc5531\|rfc 5531"`
+        across `Sources/`, `Tests/`, `CLAUDE.md`, `README.md`, and
+        `README.ko.md`, then cross-checked against the actual table of
+        contents and section bodies of `docs/rfc5531.txt`.
+
+        For reference, the real top-level structure of RFC 5531 is:
+
+        - §1  Introduction
+        - §2  Changes since RFC 1831
+        - §3  Terminology
+        - §4  The RPC Model
+        - §5  Transports and Semantics
+        - §6  Binding and Rendezvous Independence
+        - §7  Authentication
+        - §8  RPC Protocol Requirements
+            - §8.1  RPC Programs and Procedures
+            - §8.2  Authentication, Integrity, and Privacy
+            - §8.3  Program Number Assignment
+            - §8.4  Other Uses of the RPC Protocol
+        - §9  The RPC Message Protocol  (defines `rpc_msg`, `msg_type`,
+              `reply_stat`, `accept_stat`, `reject_stat`, `auth_stat`,
+              `call_body`, `accepted_reply`, `rejected_reply`,
+              `mismatch_info`, plus the `xid` matching rule)
+        - §10 Authentication Protocols
+        - §11 Record Marking Standard
+        - §12 The RPC Language
+        - §13 IANA Considerations
+        - §14 Security Considerations
+        - Appendix A  System Authentication  (defines `authsys_parms`
+                      for AUTH_SYS, plus the rules for the AUTH_SYS
+                      reply verifier flavor)
+        - Appendix B  Requesting RPC-Related Numbers from IANA
+        - Appendix C  Current Number Assignments
+
+        Notable: **Appendix A has no sub-numbering**. There is no
+        `Appendix A.1`, `Appendix A.2`, or `§A.2` in RFC 5531.
+
+        ## Hallucinations identified and corrected
+
+        ### `Sources/NanoNFS/RPC/RPCMessage.swift:24`
+
+        - The cited `RFC 5531 Appendix A.1` for the AUTH_SYS credential
+          body (`authsys_parms`) does not exist — Appendix A is a flat
+          appendix with no sub-numbering.
+        - The `authsys_parms` struct itself is in fact defined in
+          **Appendix A** (System Authentication), so the citation was
+          corrected to `RFC 5531 Appendix A`.
+
+        ### `Sources/NanoNFS/RPC/RPCMessage.swift:152`
+
+        - The comment "the verifier is AUTH_NONE, which is what AUTH_SYS
+          expects for replies (RFC 5531 §8.2)" pinned the AUTH_SYS-specific
+          reply-verifier rule to §8.2.
+        - §8.2 (Authentication, Integrity, and Privacy) only defines the
+          generic `opaque_auth` envelope and the `auth_flavor` enum; it
+          does not say anything about *which* flavor an AUTH_SYS reply
+          verifier should carry.
+        - The actual normative statement — "The flavor value of the
+          verifier received in the reply message from the server may be
+          'AUTH_NONE' or 'AUTH_SHORT'" — lives in **Appendix A**. The
+          citation was corrected to `RFC 5531 Appendix A` accordingly.
+
+        ### `Sources/NanoNFS/RPC/RPCConstants.swift:36`
+
+        - The `RPCAuthStatus` enum was annotated as `RFC 5531 §A.2 — auth_stat`.
+        - Two problems: (a) `§A.2` (or `Appendix A.2`) does not exist
+          in RFC 5531 at all, and (b) the `auth_stat` enum is not in
+          Appendix A in any form — it is defined in **§9** (The RPC
+          Message Protocol), as part of the same block that defines
+          `accept_stat` and `reject_stat`.
+        - Citation corrected to `RFC 5531 §9 — auth_stat`, which makes
+          this enum's section reference consistent with the neighboring
+          `RPCAcceptStatus` (`§9 — accept_stat`) and `RPCRejectStatus`
+          (`§9 — reject_stat`) annotations in the same file.
+
+        ## Citations verified as correct (left unchanged)
+
+        - `Sources/NanoNFS/RPC/RPCRecordMarking.swift:4`  — `§11` for record marking
+        - `Sources/NanoNFS/RPC/RPCRecordMarking.swift:39` — `§11` for the streaming decoder
+        - `Sources/NanoNFS/XDR/XDR.swift:15`              — `§11` for oversize-fragment guards
+        - `Sources/NanoNFS/RPC/RPCMessage.swift:4`        — `§9` for `rpc_msg`
+        - `Sources/NanoNFS/RPC/RPCMessage.swift:14`       — `§8.2` for `opaque_auth` (≤400 byte body)
+        - `Sources/NanoNFS/RPC/RPCMessage.swift:20`       — `§8.2` for `opaque_auth.body` length cap
+        - `Sources/NanoNFS/RPC/RPCMessage.swift:145`      — `§11` for the record-mark header
+        - `Sources/NanoNFS/RPC/RPCConstants.swift:6`      — `§9` for `rpc_msg.rpcvers == 2`
+        - `Sources/NanoNFS/RPC/RPCConstants.swift:20`     — `§9` for `accept_stat`
+        - `Sources/NanoNFS/RPC/RPCConstants.swift:30`     — `§9` for `reject_stat`
+        - `Sources/NanoNFS/RPC/RPCConstants.swift:50`     — `§8.2` for `auth_flavor`
+        - `Sources/NanoNFS/Wire/RPCSession.swift:37`      — `§9` for program identification (`prog`/`vers`/`proc` in `call_body`)
+        - `Sources/NanoNFS/Public/NFSServerListener.swift:119` — `§9` for the xid-matching rule
+        - `Tests/NanoNFSTests/ListenerIntegrationTests.swift:165`  — `§9` for the xid-matching rule
+        - `Tests/NanoNFSTests/RPCTests.swift:6`           — bare `RFC 5531`, no specific section
+        - `README.md:59` / `README.ko.md:59`              — bare `RFC 5531`, no specific section
+        - `CLAUDE.md:42 / 162 / 166`                       — bare `RFC 5531`, no specific section
+        - `CLAUDE.md:266`                                  — `§9` for the xid-matching rule
+
+        ## Build status
+
+        `swift build` succeeds after the edits. No code semantics
+        changed — the corrections are purely in doc-comments.
+    </report>
+    <note>
+        # Audit method note
+
+        - The audit was driven entirely by `grep` over the working tree
+          plus direct reads of `docs/rfc5531.txt`. No memory-based
+          reasoning about RFC 5531 section numbers was used (per
+          `CLAUDE.md` §4 anti-hallucination rule), since this audit is
+          itself the meta-version of that rule applied to RFC 5531.
+        - The pattern of the three found defects is the same one that
+          showed up in the 2026-05-09 RFC 7530 audit: appendix
+          sub-numbering invented out of thin air (`Appendix A.1`, `§A.2`)
+          and a section pinned to the closest-feeling chapter rather
+          than the one that actually defines the cited concept (§8.2
+          vs Appendix A for AUTH_SYS reply-verifier rules). Worth
+          keeping in mind for future RFC reference passes.
+    </note>
+</agent-task-report>
