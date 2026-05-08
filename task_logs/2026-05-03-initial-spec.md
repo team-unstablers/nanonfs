@@ -1,0 +1,21 @@
+# 2026-05-03 — 초기 스펙 확정
+
+- README.md 를 단순 스케치에서 **스펙 문서** 로 격상.
+- 와이어 프로토콜은 **NFSv4.0 (RFC 7530) 단일** 로 고정. NFSv3, v4.1, pNFS 비지원.
+- 플랫폼은 **macOS 14+** 단독.
+- RPC 레이어는 **SwiftNIO 기반**, XDR 은 **직접 구현**.
+- File handle 은 README 의 `inode: Int64` 스케치를 폐기하고 **NFSv4 그대로의 opaque `Data`** (`NFSFileHandle`) 로 결정.
+- 인증은 **AUTH_SYS** 만. AUTH_NONE / RPCSEC_GSS 는 거부.
+- 마운트는 사용자 책임 (라이브러리는 `mount_nfs` 호출하지 않음).
+- 사용자 API 는 **stateid 노출 / 사용자 관리** 로 결정 — FUSE 보다 NFSv4 의미를 더 직시. OPEN/OPEN_CONFIRM/OPEN_DOWNGRADE/CLOSE 가 모두 사용자 메서드.
+- 클라이언트 라이프사이클 (`SETCLIENTID`/`RENEW`/lease) 은 라이브러리 자동.
+- Lock (`LOCK`/`LOCKT`/`LOCKU`) 은 사용자 메서드.
+- 고급 기능 중 **Delegation 만 Phase 1 포함**. ACL / Named Attributes 는 비지원.
+- Attribute 모델은 **POSIX-like `NFSStat` struct + `NFSAttributesPatch`** (FATTR4 비트맵은 라이브러리 내부에서 변환).
+- 에러는 `NFSError` enum, READ/WRITE 페이로드는 `Foundation.Data`, READDIR 은 cookie/limit 직접 노출.
+- Listener 는 **`run()` 프레임워크 스타일** (swift-service-lifecycle 풍).
+- Swift 6.0+ / strict concurrency / NFSServer 는 모든 메서드 required (default 구현 없음).
+- 기본 바인딩: `127.0.0.1`, 기본 포트: `14049` (root 회피). 외부 바인딩은 명시적 escape hatch.
+- 모듈 구조: 단일 product `NanoNFS`, 폴더 분리 `Public / Wire / RPC / XDR / Internal`, 의존 방향은 `Public → Wire → RPC → XDR` 단일 방향.
+- 테스트: swift-testing + 실제 mount_nfs 시나리오 1개 이상 의무.
+- **다음 작업**: `Package.swift` 작성 → `Public/` 의 타입(`NFSFileHandle`, `NFSStat`, `NFSError`, `NFSServer` protocol, `NFSServerListener`) 만 먼저 컴파일 가능 stub 으로 만들기 → XDR 인코더 → RPC 메시지 프레임 → COMPOUND 디스패치 골격 → op 별 구현. 사용자와 어디서부터 시작할지 다시 합의 후 진입.
