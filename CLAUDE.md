@@ -38,6 +38,7 @@ Higher items win on conflict. However, when the code and `README.md` disagree, *
 ```
 Sources/NanoNFS/
 ├── Public/      # Public API. Everything that is visible when the module is imported.
+├── Transport/   # Listener-level transport implementations (NIO, BSD socket). Each file is trait-gated.
 ├── Wire/        # NFSv4 op handling, COMPOUND dispatch, stateid / clientid / delegation management
 ├── RPC/         # ONC RPC (RFC 5531). AUTH_SYS parsing. Callback-channel RPC client.
 ├── XDR/         # XDR (RFC 4506) encoder / decoder. Pure functions plus small reader / writer.
@@ -47,15 +48,16 @@ Sources/NanoNFS/
 ### Allowed dependency direction (top → down only)
 
 ```
-Public  →  Wire  →  RPC  →  XDR
-                ↘     ↘
-                  Internal
+Public  →  Transport  →  Wire  →  RPC  →  XDR
+                  ↘            ↘     ↘
+                    ────────────  Internal
 ```
 
 - **Reverse-direction imports are forbidden.** For example, `XDR` must not import any `RPC` type. `RPC` must not know about any `Wire` type.
 - **`Public/` does not directly expose types from other folders.** All Wire/RPC/XDR types are `internal`. When something must be public, place a separate type in `Public/` and add a translation layer.
 - **The XDR layer is unaware of NFS semantics.** `XDR` only contains generic encoders such as `xdrEncode(uint32:)`. NFSv4 struct encoding is composed in `RPC` or `Wire` from XDR primitives.
-- **The Wire layer is the sole entry point for `NFSServer` calls.** `Public.NFSServerListener` only creates a NIO channel and forwards received messages to the `Wire` dispatcher.
+- **The Wire layer is the sole entry point for `NFSServer` calls.** `Public.NFSServerListener` drives a `Transport/` implementation, which produces raw byte streams; the listener feeds those into the `Wire` dispatcher.
+- **`Transport/` only consumes the public byte-stream adapters** (`NFSAsyncByteStream` / `NFSAsyncByteWriter`). It does not import `Wire/RPC/XDR`. Record-mark framing and dispatch live on `NFSServerListener`.
 
 It can be tempting to break the dependency direction in order to avoid cross-layer plumbing — **don't**. The layer separation is what enables future work like adding NFSv3 or `ByteBuffer` overloads.
 
@@ -63,7 +65,7 @@ It can be tempting to break the dependency direction in order to avoid cross-lay
 
 ## 3. Coding style / Concurrency
 
-- `swift-tools-version: 6.0`. **Swift 6 strict concurrency** is not disabled.
+- `swift-tools-version: 6.2`. **Swift 6 strict concurrency** is not disabled. The 6.2 bump is required for SE-0450 package traits used to gate the transport implementations.
 - **All public types are `Sendable`.** When unavoidable, use `@unchecked Sendable` and document the reason in a one-line comment.
 - The `NFSServer` implementation is provided by the user, but the library's recommendation is **`actor`**. Making user code safe against concurrent calls is the user's responsibility; the library does not serialize calls into user methods on its behalf.
 - Library-internal state (clientid table, stateid issuance, delegation tracking, etc.) is each isolated in **its own `actor`**. No single mega-actor.
@@ -72,6 +74,14 @@ It can be tempting to break the dependency direction in order to avoid cross-lay
 - For places where lockless atomics suffice (counters, sequence numbers), use `swift-atomics`.
 - `Foundation.Data` is used only at payload boundaries (`read` / `write` / file handle bytes). Inside hot paths (XDR encoder etc.) `ByteBuffer` is preferred.
 - **Errors are `NFSError`** or library-internal error enums. If `POSIXError` / `NSError` is thrown from a user method, the Wire layer maps it to `NFS4ERR_SERVERFAULT` — the user's throw signature is not enforced, but unmapped errors **must be recorded with `logger.warning`**.
+
+### Trait gating
+
+- Two package traits — `NIO` (default-enabled) and `BSDSocket` — control which transport implementation is compiled into the library. Inside the source these are surfaced as `#if NIO` / `#if BSDSOCKET` (uppercase, set via `swiftSettings.define(...)` in `Package.swift`).
+- **Each file under `Sources/NanoNFS/Transport/` is wrapped in a single top-level `#if` for its trait.** Do not sprinkle trait-conditional pieces into shared files; if a trait is off, the corresponding transport file becomes effectively empty.
+- Baseline dependencies (`NIOCore`, `NIOFoundationCompat`, `swift-log`, `swift-atomics`) are pulled unconditionally — never put them behind a trait condition. `NIOCore.ByteBuffer` is the encoding medium across XDR / RPC / Wire and trait-gating it would leave the encoder uncompilable.
+- Public API never gates a *type* on a trait unless the type is meaningless without that trait. The current exception is `NFSNIOEventLoopGroupBox`, which only exists when `NIO` is enabled.
+- A user must enable at least one transport trait. `Package.swift` enforces this with a top-level `#error` when both traits are off.
 
 ---
 
@@ -146,5 +156,7 @@ It can be tempting to break the dependency direction in order to avoid cross-lay
 - [2026-05-09 — RFC 7530 reference audit + NFSStatus raw shift fix](task_logs/2026-05-09-rfc7530-audit.md)
 - [2026-05-09 — RFC 5531 reference audit (follow-up to the 7530 audit)](task_logs/2026-05-09-rfc5531-audit.md)
 - [2026-05-09 — RFC 4506 reference audit (third in the series; clean)](task_logs/2026-05-09-rfc4506-audit.md)
+- [2026-05-09 — BSD-socket transport spec v1.1 confirmed](task_logs/2026-05-09-bsdsocket-spec-v11.md)
+- [2026-05-09 — BSD-socket transport implementation (spec v1.1 landed)](task_logs/2026-05-09-bsdsocket-impl.md)
 
 <!-- New entries: append a new bullet at the bottom of the index AND create the corresponding file in task_logs/. -->

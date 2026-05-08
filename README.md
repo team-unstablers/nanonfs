@@ -35,20 +35,53 @@ Non-goals:
 
 - Swift Package name (repo directory): `nanonfs`
 - Swift module / product name: **`NanoNFS`**
-- `swift-tools-version`: `6.0`
+- `swift-tools-version`: `6.2` (requires SE-0450 package traits)
 - Target platform: **macOS 14+** (other platforms are not supported)
 - Swift Concurrency: **strict concurrency** mode, all public types are `Sendable`
 - License: **MIT**
 
 ### Dependencies
 
-| Package | Purpose |
-| --- | --- |
-| `apple/swift-nio` | TCP listener / async I/O |
-| `apple/swift-log` | Logging facade |
-| `apple/swift-atomics` | Lockless counters such as client / session counters |
+| Package | Purpose | Always pulled? |
+| --- | --- | --- |
+| `apple/swift-nio` (`NIOCore`, `NIOFoundationCompat`) | `ByteBuffer` and the encoder primitives that the XDR / RPC / Wire layers are built on | Yes — baseline |
+| `apple/swift-nio` (`NIO`, `NIOPosix`) | The default NIO-backed listener (`NFSTransport.nio`) | Only with the `NIO` trait |
+| `apple/swift-log` | Logging facade | Yes — baseline |
+| `apple/swift-atomics` | Lockless counters such as client / session counters | Yes — baseline |
+
+`NIOCore.ByteBuffer` is the encoding medium across the XDR / RPC / Wire layers, so `NIOCore` (and `NIOFoundationCompat` for `Data` interop) are unconditional baseline dependencies. Trait gating only affects which **listener implementation** gets built — not the encoder path.
 
 Tests are written using **swift-testing** (`@Test`). The `mount_nfs` integration e2e tests assume a macOS environment.
+
+### Package traits
+
+`NanoNFS` exposes two traits that select which TCP listener implementation is built into the library. At least one trait must be enabled, otherwise the package fails to compile.
+
+| Trait | Default | Listener implementation | External dependencies pulled |
+| --- | --- | --- | --- |
+| `NIO` | enabled | `NFSTransport.nio(eventLoopGroup:)` — `NIOPosix.ServerBootstrap` based | `swift-nio`'s `NIO` and `NIOPosix` products |
+| `BSDSocket` | disabled | `NFSTransport.bsdSocket` — pure Swift Concurrency on top of `socket(2)` + `kqueue(2)` + `EVFILT_USER` | none beyond baseline (`Foundation` + `Darwin`) |
+
+To opt out of NIO entirely (e.g. when consuming `NanoNFS` from a host application that does not want a Swift-NIO dependency for the network layer), disable the `NIO` trait and enable `BSDSocket`:
+
+```swift
+.package(url: "...", from: "...", traits: ["BSDSocket"])
+```
+
+Or, in a `Package.swift` consumer:
+
+```swift
+.package(
+    url: "https://github.com/.../nanonfs.git",
+    from: "0.x.0",
+    traits: [
+        .trait(name: "BSDSocket"),
+        // .default omitted — disables NIO
+    ]
+)
+```
+
+Both traits can be enabled simultaneously. In that case `NFSTransport.default` resolves to `.nio()`; `.bsdSocket` is still available for explicit selection.
 
 ### Sources directory layout
 
@@ -82,7 +115,8 @@ actor MyFS: NFSServer {
 
 let listener = NFSServerListener(
     server: MyFS(),
-    bind: .loopback(port: 14049)   // default 127.0.0.1:14049
+    bind: .loopback(port: 14049),   // default 127.0.0.1:14049
+    transport: .default              // .nio() when the NIO trait is on, .bsdSocket otherwise
 )
 
 try await listener.run()
@@ -95,6 +129,8 @@ sudo mount_nfs -o vers=4,port=14049,mountport=14049,tcp 127.0.0.1:/ /mnt/myfs
 ```
 
 The library does not help with invoking `mount_nfs` (that is the user's responsibility). However, the `Bind` configuration explicitly prevents binding to external interfaces in order to guarantee the loopback intent.
+
+The transport is pluggable. Picking `.nio()` (the default when the `NIO` trait is on) uses an `NIOPosix.ServerBootstrap`-based listener that lets you optionally inject your own `EventLoopGroup`. Picking `.bsdSocket` uses a pure Swift Concurrency listener built directly on `socket(2)` + `kqueue(2)` and pulls no Swift-NIO product beyond the baseline `NIOCore` (used as the XDR encoding medium). You can also supply a custom transport with `.custom(myImpl)` — see §4.6.
 
 ---
 
@@ -401,10 +437,10 @@ public enum NFSCreateMode: Sendable {
 }
 ```
 
-### 4.6 Listener / binding
+### 4.6 Listener / binding / transport
 
 ```swift
-public struct NFSBind: Sendable {
+public struct NFSBind: Sendable, Equatable {
     /// Allows only 127.0.0.1 / ::1. If an external interface is supplied, it `precondition`s at init time.
     public static func loopback(port: UInt16 = 14049) -> NFSBind
     /// Explicitly binds to an external IP — an escape hatch that breaks the loopback intent.
@@ -412,17 +448,25 @@ public struct NFSBind: Sendable {
     public static func external(host: String, port: UInt16) -> NFSBind
 }
 
+/// The address the transport ended up bound to. Transport-agnostic — does not
+/// expose any NIO type. Host is the IPv4 / IPv6 textual representation.
+public struct NFSBoundAddress: Sendable, Hashable {
+    public let host: String
+    public let port: UInt16
+    public init(host: String, port: UInt16)
+}
+
 public final class NFSServerListener: Sendable {
     public init(server: any NFSServer,
                 bind: NFSBind = .loopback(),
-                logger: Logger = Logger(label: "nanonfs"),
-                eventLoopGroup: EventLoopGroup? = nil)
+                transport: NFSTransport = .default,
+                logger: Logger = Logger(label: "nanonfs"))
 
     /// swift-service-lifecycle style. Returns after a graceful shutdown if the Task is cancelled.
     public func run() async throws
 
     /// The currently bound (host, port). It has a value once binding is complete inside `run()`.
-    public var boundAddress: SocketAddress? { get async }
+    public var boundAddress: NFSBoundAddress? { get async }
 }
 ```
 
@@ -431,6 +475,104 @@ public final class NFSServerListener: Sendable {
 - Authentication: only **AUTH_SYS** is accepted. AUTH_NONE / RPCSEC_GSS are rejected with NFS4ERR_WRONGSEC.
 - Client lifecycle (`SETCLIENTID` / `RENEW` / lease expiration) is **managed automatically by the library** — it is not exposed to the `NFSServer` implementer.
 - Delegation: when the user supplies a `wantDelegation` hint, the library handles issuing and recalling it (CB_RECALL) automatically.
+
+#### Transport selection
+
+```swift
+/// Selects which TCP listener implementation `NFSServerListener` uses. Cases
+/// are conditionally compiled in based on the package traits enabled at build
+/// time (see §2). `Equatable` is intentionally not synthesised because
+/// `case custom(any ...)` cannot be compared structurally.
+public enum NFSTransport: Sendable {
+    #if NIO
+    /// Swift-NIO based listener. If `eventLoopGroup` is `nil` the transport
+    /// owns and tears down its own single-thread `MultiThreadedEventLoopGroup`.
+    /// If you supply one, its lifetime stays your responsibility — the
+    /// transport will not shut it down.
+    case nio(eventLoopGroup: NFSNIOEventLoopGroupBox? = nil)
+    #endif
+
+    #if BSDSOCKET
+    /// macOS BSD socket based listener. Pure Swift Concurrency on top of
+    /// `socket(2)` + `kqueue(2)` + `EVFILT_USER`. No GCD, no Network.framework.
+    case bsdSocket
+    #endif
+
+    /// User-supplied implementation.
+    case custom(any NFSTransportImplementation)
+
+    /// Resolves to the highest-priority enabled trait at build time.
+    /// Priority: `nio` > `bsdSocket`. If neither trait is enabled,
+    /// the package fails to compile (`#error`).
+    public static var `default`: NFSTransport { get }
+}
+
+#if NIO
+/// Trait-gated: only present when the `NIO` trait is enabled. Lets users hand
+/// in their own NIO `EventLoopGroup` without making `NIOCore.EventLoopGroup`
+/// part of the unconditional public API.
+public struct NFSNIOEventLoopGroupBox: Sendable {
+    public let group: any EventLoopGroup
+    public init(_ group: any EventLoopGroup)
+}
+#endif
+```
+
+#### Custom transport (`NFSTransportImplementation`)
+
+A transport is a *listener-level* abstraction: one instance is responsible for `bind` + `accept` loop + per-connection raw byte I/O. Record-mark framing (RFC 5531 §11) and NFSv4 COMPOUND dispatch stay on `NFSServerListener` itself, so the transport only deals with raw TCP bytes.
+
+```swift
+public protocol NFSTransportImplementation: Sendable {
+
+    /// Fired once between bind(2) and accept(2). The listener uses it to
+    /// publish the actual host/port through `NFSServerListener.boundAddress`.
+    typealias BindNotification = @Sendable (NFSBoundAddress) async -> Void
+
+    /// Invoked once per accepted client connection.
+    ///   - `inbound`  is the raw TCP byte stream (before record-mark decoding).
+    ///   - `outbound` is the raw TCP byte writer (after record-mark encoding).
+    /// The transport keeps the connection open until this closure either
+    /// returns normally or throws.
+    typealias ConnectionHandler = @Sendable (
+        _ inbound: NFSAsyncByteStream,
+        _ outbound: NFSAsyncByteWriter
+    ) async throws -> Void
+
+    /// Bind, accept, dispatch. Returns when the surrounding `Task` is
+    /// cancelled (graceful shutdown).
+    func serve(
+        bind: NFSBind,
+        logger: Logger,
+        onBind: BindNotification,
+        connectionHandler: ConnectionHandler
+    ) async throws
+}
+
+/// One connection's inbound byte stream. AsyncSequence semantics: terminates
+/// on cancellation or peer half-close. Element is `NIOCore.ByteBuffer`, which
+/// is part of the unconditional baseline (see §2).
+public struct NFSAsyncByteStream: AsyncSequence, Sendable {
+    public typealias Element = ByteBuffer
+    // ...
+}
+
+/// One connection's outbound byte writer. Single-writer.
+public struct NFSAsyncByteWriter: Sendable {
+    public func write(_ buffer: ByteBuffer) async throws
+    public func finish() async  // half-close
+}
+```
+
+Transport responsibilities at a glance:
+
+| Concern | Owner |
+| --- | --- |
+| `bind(2)` / `listen(2)` / `accept(2)` loop | transport |
+| per-connection raw byte read / write | transport |
+| RFC 5531 §11 record-mark framing | `NFSServerListener` (shared) |
+| RPC dispatch (`CompoundDispatcher`) | `NFSServerListener` (shared) |
+| per-connection in-flight cap | `NFSServerListener` (shared) |
 
 ---
 
