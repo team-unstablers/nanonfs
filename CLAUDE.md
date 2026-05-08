@@ -255,3 +255,29 @@ Public  →  Wire  →  RPC  →  XDR
 - 알려진 운영 잡음 (개선 후보):
   - 정상 connection 종료 시 `inbound ended: CancellationError()` info 로그가 한 conn 당 한 번 출력. teardown 경로에서 `CancellationError` 만 swallow 하는 게 깔끔.
 - **다음**: 형아의 실 측정 (`dd`, Finder copy) 으로 read/write throughput 변화량 확인. 기대치 보다 낮으면 (a) Fix 5 (Data ↔ ByteBuffer) 합의 후 진입, (b) Instruments time profiler 로 응답 빌드 핫스팟 (`encodeFattr4`/READDIR 인코딩) 추가 점검.
+
+### 2026-05-08 — Konsole.app copy 병목 1차 진단 + DemoFS 저장 구조 개선
+
+- 형아 보고: `/Applications/konsole.app` 을 데모 서버로 복사할 때 매우 느림.
+- 로컬 확인: Konsole.app 은 약 357 MiB, regular file 7543개, directory 921개, symlink 443개. 단일 대형 파일 throughput 보다 metadata-heavy bundle copy 병목이 잘 드러나는 케이스.
+- 1차 원인: `Sources/NanoNFSDemo/main.swift` 의 `DemoFS.Entry` 가 값 타입 struct 이고 `content: Data` 를 딕셔너리에 저장함. `write` 에서 `guard var e = entries[handle]` 로 꺼낸 뒤 `e.content.replaceSubrange` 후 다시 `entries[handle] = e` 하는 패턴은 Data COW 때문에 chunk write 마다 기존 파일 내용을 다시 복사할 수 있어 큰 파일에서 O(n²) 에 가까워짐.
+- 수정:
+  - `Entry` 를 actor 내부 private `final class` 로 바꿔 dictionary lookup 이 entry reference 를 돌려주게 함. `setattr(size:)`, `create`, `remove`, `rename`, `write` 는 entry reference 를 직접 mutate 하도록 정리해서 기존 content 전체 COW 복사를 피함.
+  - `setattr(size:)` shrink 는 `prefix` 재할당 대신 `removeSubrange`, grow/write 는 `reserveCapacity` 후 zero fill.
+  - `DemoFS.readdir` 이 이제 `maxEntries` 와 cookie 를 존중하고, `NFSDirEntry.fileHandle` 을 per-entry fh 로 채움. Finder 가 READDIR 에서 FATTR4_FILEHANDLE 을 요청하는 경로의 잘못된 parent-fh fallback 을 피하기 위함.
+  - README §5.5 와 demo log 의 mount 예시를 `rsize=1048576,wsize=1048576,dsize=1048576` 포함 형태로 갱신.
+- 테스트: `swift test` 65개 전부 통과.
+- 남은 이슈:
+  - Konsole.app 에 symlink 가 443개 있는데, 현재 dispatcher 는 CREATE symlink target 을 디코드만 하고 `NFSServer.create` 로 전달하지 못함. DemoFS 도 symlink target 을 보존하지 못하고 `readlink` 는 invalid. 성능과 별개로 app bundle correctness 를 위해 README/API 확장 합의가 필요.
+  - 여전히 `NFSServer.read/write` 는 `Data` API 라서 wire ↔ Data 복사가 남음. 이번 수정은 demo storage COW 병목 제거이고, 진짜 zero-copy 는 ByteBuffer 오버로드 설계가 필요.
+
+### 2026-05-08 — nanonfs core copy-elision 1차
+
+- 형아 요청: demo server 보다 nanonfs 자체의 performance 개선 필요.
+- 공개 API 변경 없이 가능한 core copy-elision 을 먼저 적용:
+  - `RPCRecordMarkingDecoder.step` 에 single-fragment fast path 추가. macOS NFS WRITE 는 보통 single fragment 로 들어오므로, 기존처럼 `pendingFragments.writeBuffer(&slice)` 로 RPC body 전체를 accumulator 에 복사하지 않고 바로 slice 를 message 로 반환. multi-fragment 의 첫 fragment 도 accumulator copy 대신 slice 보관.
+  - `XDREncoder` 에 `writeFixedOpaque(_ bytes: ByteBuffer)` / `writeVariableOpaque(_ bytes: ByteBuffer)` 추가. ByteBuffer payload 를 XDR opaque 로 감쌀 때 `Data(readableBytesView)` 중간 변환을 피함.
+  - `XDREncoder.writeString` 이 `Data(s.utf8)` 대신 `s.utf8` collection 을 바로 씀.
+  - `encodeGetattrResult` 와 READDIR entry attr encoding 에서 `ByteBuffer -> Data -> ByteBuffer` 재포장 제거.
+- 테스트: `swift test` 65개 전부 통과.
+- 남은 큰 병목: `NFSServer.read/write` 공개 API 가 `Data` 라서 WRITE 는 XDR payload 를 결국 Data 로 복사하고, READ 는 user Data 를 ByteBuffer 로 다시 복사한다. 이걸 없애려면 README/API 를 먼저 바꾸고 ByteBuffer 오버로드 또는 별도 fast-path protocol 을 추가해야 함.
