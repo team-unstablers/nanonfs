@@ -19,3 +19,16 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+Third-party content
+
+The file `docs/rfc7530.txt` is a verbatim copy of IETF RFC 7530 (Network
+File System (NFS) Version 4 Protocol), reproduced for reference only. It
+is not part of the Software covered by the MIT license above; it is
+distributed under its original IETF terms (BCP 78 and the IETF Trust's
+Legal Provisions Relating to IETF Documents, see
+https://trustee.ietf.org/license-info). Refer to the copyright notice and
+license terms contained within the file itself for the authoritative
+statement.
