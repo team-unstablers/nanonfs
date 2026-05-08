@@ -479,7 +479,7 @@ swift run NanoNFSDemo
 
 # 2. In another terminal:
 sudo mkdir -p /mnt/nanonfs
-sudo mount_nfs -o vers=4,port=14049,mountport=14049,tcp,resvport=0 \
+sudo mount_nfs -o vers=4,port=14049,mountport=14049,tcp,resvport=0,rsize=1048576,wsize=1048576,dsize=1048576 \
     127.0.0.1:/ /mnt/nanonfs
 
 ls /mnt/nanonfs           # hello.txt, readme

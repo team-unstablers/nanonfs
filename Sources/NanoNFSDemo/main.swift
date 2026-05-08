@@ -13,14 +13,14 @@ import NanoNFS
 // Usage:
 //   swift run NanoNFSDemo
 //   sudo mkdir -p /mnt/nanonfs
-//   sudo mount_nfs -o vers=4,port=14049,mountport=14049,tcp,resvport=0 \
+//   sudo mount_nfs -o vers=4,port=14049,mountport=14049,tcp,resvport=0,rsize=1048576,wsize=1048576,dsize=1048576 \
 //        127.0.0.1:/ /mnt/nanonfs
 //   ls /mnt/nanonfs
 //   echo hi > /mnt/nanonfs/test.txt
 //   sudo umount /mnt/nanonfs
 
 actor DemoFS: NFSServer {
-    private struct Entry {
+    private final class Entry {
         var fileid: UInt64
         var type: NFSObjectType
         var mode: UInt32
@@ -32,6 +32,30 @@ actor DemoFS: NFSServer {
         var atime: NFSTime
         var mtime: NFSTime
         var ctime: NFSTime
+
+        init(fileid: UInt64,
+             type: NFSObjectType,
+             mode: UInt32,
+             uid: UInt32,
+             gid: UInt32,
+             content: Data,
+             children: [String: NFSFileHandle],
+             parent: NFSFileHandle?,
+             atime: NFSTime,
+             mtime: NFSTime,
+             ctime: NFSTime) {
+            self.fileid = fileid
+            self.type = type
+            self.mode = mode
+            self.uid = uid
+            self.gid = gid
+            self.content = content
+            self.children = children
+            self.parent = parent
+            self.atime = atime
+            self.mtime = mtime
+            self.ctime = ctime
+        }
     }
 
     private var entries: [NFSFileHandle: Entry] = [:]
@@ -89,11 +113,10 @@ actor DemoFS: NFSServer {
     }
 
     private func touch(_ handle: NFSFileHandle) {
-        guard var e = entries[handle] else { return }
+        guard let e = entries[handle] else { return }
         let now = NFSTime.now()
         e.mtime = now
         e.ctime = now
-        entries[handle] = e
     }
 
     private func stat(of handle: NFSFileHandle) throws -> NFSStat {
@@ -127,22 +150,23 @@ actor DemoFS: NFSServer {
     }
 
     func setattr(handle: NFSFileHandle, stateid: NFSStateID?, patch: NFSAttributesPatch) async throws -> NFSStat {
-        guard var e = entries[handle] else { throw NFSError.badHandle }
+        guard let e = entries[handle] else { throw NFSError.badHandle }
         if let m = patch.mode { e.mode = m & 0xFFF }
         if let u = patch.uid { e.uid = u }
         if let g = patch.gid { e.gid = g }
         if let s = patch.size {
             guard e.type == .regularFile else { throw NFSError.isDirectory }
-            if Int(s) < e.content.count {
-                e.content = e.content.prefix(Int(s))
-            } else if Int(s) > e.content.count {
-                e.content.append(Data(count: Int(s) - e.content.count))
+            let newSize = Int(s)
+            if newSize < e.content.count {
+                e.content.removeSubrange(newSize..<e.content.count)
+            } else if newSize > e.content.count {
+                e.content.reserveCapacity(newSize)
+                e.content.append(contentsOf: repeatElement(UInt8(0), count: newSize - e.content.count))
             }
         }
         if let a = patch.atime { e.atime = a }
         if let m = patch.mtime { e.mtime = m }
         e.ctime = .now()
-        entries[handle] = e
         return try stat(of: handle)
     }
 
@@ -162,25 +186,42 @@ actor DemoFS: NFSServer {
                  maxEntries: Int) async throws -> NFSDirList {
         guard let e = entries[handle] else { throw NFSError.badHandle }
         guard e.type == .directory else { throw NFSError.notDirectory }
-        // We always return the full directory in one shot for the demo.
-        if cookie != 0 {
+        let sortedChildren = e.children
+            .compactMap { (name, fh) -> (name: String, fh: NFSFileHandle, entry: Entry)? in
+                guard let child = entries[fh] else { return nil }
+                return (name: name, fh: fh, entry: child)
+            }
+            .sorted { $0.name < $1.name }
+        let startIndex: Int
+        if cookie == 0 {
+            startIndex = 0
+        } else if let previous = sortedChildren.firstIndex(where: { $0.entry.fileid == cookie }) {
+            startIndex = previous + 1
+        } else {
             return NFSDirList(entries: [], nextCookie: nil, verifier: 1, eof: true)
         }
+
+        let limit = max(1, maxEntries)
+        let endIndex = min(startIndex + limit, sortedChildren.count)
+        let batch = sortedChildren[startIndex..<endIndex]
         var out: [NFSDirEntry] = []
-        for (name, fh) in e.children.sorted(by: { $0.key < $1.key }) {
-            if let child = entries[fh] {
-                out.append(NFSDirEntry(
-                    fileid: child.fileid, name: name,
-                    attrs: try? stat(of: fh)
-                ))
-            }
+        out.reserveCapacity(batch.count)
+        for child in batch {
+            out.append(NFSDirEntry(
+                fileid: child.entry.fileid,
+                name: child.name,
+                attrs: try? stat(of: child.fh),
+                fileHandle: child.fh
+            ))
         }
-        return NFSDirList(entries: out, nextCookie: nil, verifier: 1, eof: true)
+        let eof = endIndex >= sortedChildren.count
+        let nextCookie = eof ? nil : out.last?.fileid
+        return NFSDirList(entries: out, nextCookie: nextCookie, verifier: 1, eof: eof)
     }
 
     func create(parent: NFSFileHandle, name: String, type: NFSObjectType,
                 attrs: NFSAttributesPatch) async throws -> NFSFileHandle {
-        guard var p = entries[parent], p.type == .directory else {
+        guard let p = entries[parent], p.type == .directory else {
             throw NFSError.notDirectory
         }
         if p.children[name] != nil { throw NFSError.exists }
@@ -200,12 +241,11 @@ actor DemoFS: NFSServer {
         entries[fh] = newEntry
         p.children[name] = fh
         p.mtime = now; p.ctime = now
-        entries[parent] = p
         return fh
     }
 
     func remove(parent: NFSFileHandle, name: String) async throws {
-        guard var p = entries[parent], p.type == .directory else {
+        guard let p = entries[parent], p.type == .directory else {
             throw NFSError.notDirectory
         }
         guard let fh = p.children[name], let target = entries[fh] else {
@@ -218,12 +258,11 @@ actor DemoFS: NFSServer {
         p.children.removeValue(forKey: name)
         let now = NFSTime.now()
         p.mtime = now; p.ctime = now
-        entries[parent] = p
     }
 
     func rename(srcParent: NFSFileHandle, srcName: String,
                 dstParent: NFSFileHandle, dstName: String) async throws {
-        guard var src = entries[srcParent], src.type == .directory else {
+        guard let src = entries[srcParent], src.type == .directory else {
             throw NFSError.notDirectory
         }
         guard let fh = src.children[srcName] else { throw NFSError.noEntry }
@@ -242,17 +281,15 @@ actor DemoFS: NFSServer {
             src.children[dstName] = fh
             let now = NFSTime.now()
             src.mtime = now; src.ctime = now
-            entries[srcParent] = src
             // Update child's parent pointer (unchanged but refresh ctime).
-            if var childEntry = entries[fh] {
+            if let childEntry = entries[fh] {
                 childEntry.ctime = now
-                entries[fh] = childEntry
             }
             return
         }
 
         // Cross-directory move.
-        guard var dst = entries[dstParent], dst.type == .directory else {
+        guard let dst = entries[dstParent], dst.type == .directory else {
             throw NFSError.notDirectory
         }
         if let oldDst = dst.children[dstName], let target = entries[oldDst] {
@@ -266,12 +303,9 @@ actor DemoFS: NFSServer {
         let now = NFSTime.now()
         src.mtime = now; src.ctime = now
         dst.mtime = now; dst.ctime = now
-        entries[srcParent] = src
-        entries[dstParent] = dst
-        if var childEntry = entries[fh] {
+        if let childEntry = entries[fh] {
             childEntry.parent = dstParent
             childEntry.ctime = now
-            entries[fh] = childEntry
         }
     }
 
@@ -346,17 +380,18 @@ actor DemoFS: NFSServer {
 
     func write(handle: NFSFileHandle, stateid: NFSStateID, offset: UInt64,
                stability: NFSWriteStability, data: Data) async throws -> NFSWriteResult {
-        guard var e = entries[handle], e.type == .regularFile else {
+        guard let e = entries[handle], e.type == .regularFile else {
             throw NFSError.invalid
         }
         let off = Int(offset)
-        if e.content.count < off + data.count {
-            e.content.append(Data(count: off + data.count - e.content.count))
+        let end = off + data.count
+        if e.content.count < end {
+            e.content.reserveCapacity(end)
+            e.content.append(contentsOf: repeatElement(UInt8(0), count: end - e.content.count))
         }
-        e.content.replaceSubrange(off..<off+data.count, with: data)
+        e.content.replaceSubrange(off..<end, with: data)
         let now = NFSTime.now()
         e.mtime = now; e.ctime = now
-        entries[handle] = e
         return NFSWriteResult(count: data.count, committed: stability,
                               writeVerifier: writeVerifier)
     }
@@ -397,7 +432,7 @@ struct NanoNFSDemo {
             logger: logger
         )
         logger.info("Demo NFS server starting on 127.0.0.1:14049 (in-memory R/W)")
-        logger.info("Mount with: sudo mount_nfs -o vers=4,port=14049,mountport=14049,tcp,resvport=0 127.0.0.1:/ /mnt/nanonfs")
+        logger.info("Mount with: sudo mount_nfs -o vers=4,port=14049,mountport=14049,tcp,resvport=0,rsize=1048576,wsize=1048576,dsize=1048576 127.0.0.1:/ /mnt/nanonfs")
         logger.info("Set LOG_LEVEL=debug to trace failing COMPOUND ops.")
         try await listener.run()
     }
