@@ -10,14 +10,14 @@ import NanoNFS
 //     /readme      (longer description)
 //     ...everything users create on top
 //
-// Usage:
+// Usage (no sudo required with the recommended option set below):
 //   swift run NanoNFSDemo
-//   sudo mkdir -p /mnt/nanonfs
-//   sudo mount_nfs -o vers=4,port=14049,mountport=14049,tcp,resvport=0,rsize=1048576,wsize=1048576,dsize=1048576 \
-//        127.0.0.1:/ /mnt/nanonfs
-//   ls /mnt/nanonfs
-//   echo hi > /mnt/nanonfs/test.txt
-//   sudo umount /mnt/nanonfs
+//   mkdir -p ~/nanonfs_test
+//   mount_nfs -o vers=4,port=14049,mountport=14049,tcp,rsize=1048576,wsize=1048576,dsize=1048576,actimeo=30,noatime,async \
+//        127.0.0.1:/ ~/nanonfs_test
+//   ls ~/nanonfs_test
+//   echo hi > ~/nanonfs_test/test.txt
+//   umount ~/nanonfs_test
 
 actor DemoFS: NFSServer {
     private final class Entry {
@@ -432,7 +432,7 @@ struct NanoNFSDemo {
             logger: logger
         )
         logger.info("Demo NFS server starting on 127.0.0.1:14049 (in-memory R/W)")
-        logger.info("Mount with: sudo mount_nfs -o vers=4,port=14049,mountport=14049,tcp,resvport=0,rsize=1048576,wsize=1048576,dsize=1048576 127.0.0.1:/ /mnt/nanonfs")
+        logger.info("Mount with: mount_nfs -o vers=4,port=14049,mountport=14049,tcp,rsize=1048576,wsize=1048576,dsize=1048576,actimeo=30,noatime,async 127.0.0.1:/ ~/nanonfs_test")
         logger.info("Set LOG_LEVEL=debug to trace failing COMPOUND ops.")
         try await listener.run()
     }

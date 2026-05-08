@@ -476,19 +476,27 @@ Phase 1's `swift test` verifies — using a mock-based + loopback TCP simulation
 Verifying with a real macOS NFS client (`mount_nfs`) requires **a separate demo run plus sudo**. It is not an automated test.
 
 ```sh
-# 1. Start the demo server (foreground, Ctrl+C to stop)
+# 1. Start the demo server (foreground, Ctrl+C to stop).
+#    The server binds to 127.0.0.1:14049 (an unprivileged port) and
+#    therefore runs fine as an ordinary user — no root required.
 swift run NanoNFSDemo
 
-# 2. In another terminal:
-sudo mkdir -p /mnt/nanonfs
-sudo mount_nfs -o vers=4,port=14049,mountport=14049,tcp,resvport=0,rsize=1048576,wsize=1048576,dsize=1048576 \
-    127.0.0.1:/ /mnt/nanonfs
+# 2. In another terminal. With the recommended option set below,
+#    the entire mount flow runs without sudo when the mount point
+#    sits inside your home directory.
+mkdir -p ~/nanonfs_test
 
-ls /mnt/nanonfs           # hello.txt, readme
-cat /mnt/nanonfs/hello.txt
+mount_nfs \
+    -o vers=4,port=14049,mountport=14049,tcp,rsize=1048576,wsize=1048576,dsize=1048576,actimeo=30,noatime,async \
+    127.0.0.1:/ ~/nanonfs_test
 
-sudo umount /mnt/nanonfs
+ls ~/nanonfs_test           # hello.txt, readme
+cat ~/nanonfs_test/hello.txt
+
+umount ~/nanonfs_test
 ```
+
+The recommended option set above (`port=$PORT,mountport=$PORT,tcp,rsize=1048576,wsize=1048576,dsize=1048576,actimeo=30,noatime,async`) has been confirmed to mount and unmount cleanly without `sudo` on macOS — both `mount_nfs` and `umount` work as the ordinary user who launched the server, as long as the mount point itself is user-writable.
 
 When `mount_nfs` fails with something like "Operation not supported", the cause is almost always that our server failed to provide some op or FATTR4 attribute the client expects — the log of `swift run NanoNFSDemo` (raise it to `debug` with `LOG_LEVEL=debug swift run NanoNFSDemo`) prints which op returned which status.
 

@@ -477,18 +477,25 @@ Phase 1 의 `swift test` 는 mock 기반 + loopback TCP 시뮬레이션 클라�
 
 ```sh
 # 1. 데모 서버 띄우기 (foreground, Ctrl+C 로 종료)
+#    데모 서버 자체는 root 권한이 필요 없습니다 — 127.0.0.1:14049 (>=1024) 에 바인딩하므로
+#    일반 사용자 권한으로 그대로 실행 가능합니다.
 swift run NanoNFSDemo
 
-# 2. 다른 터미널에서:
-sudo mkdir -p /mnt/nanonfs
-sudo mount_nfs -o vers=4,port=14049,mountport=14049,tcp,resvport=0 \
-    127.0.0.1:/ /mnt/nanonfs
+# 2. 다른 터미널에서. 아래 권장 옵션 셋과 사용자 홈 아래의 마운트 포인트를
+#    조합하면 모든 단계가 sudo 없이 흐릅니다.
+mkdir -p ~/nanonfs_test
 
-ls /mnt/nanonfs           # hello.txt, readme
-cat /mnt/nanonfs/hello.txt
+mount_nfs \
+    -o vers=4,port=14049,mountport=14049,tcp,rsize=1048576,wsize=1048576,dsize=1048576,actimeo=30,noatime,async \
+    127.0.0.1:/ ~/nanonfs_test
 
-sudo umount /mnt/nanonfs
+ls ~/nanonfs_test           # hello.txt, readme
+cat ~/nanonfs_test/hello.txt
+
+umount ~/nanonfs_test
 ```
+
+위 권장 옵션 셋 (`port=$PORT,mountport=$PORT,tcp,rsize=1048576,wsize=1048576,dsize=1048576,actimeo=30,noatime,async`) 으로 마운트하면 macOS 에서 `sudo` 없이 마운트·언마운트가 가능합니다 — 데모 서버를 띄운 일반 사용자 권한 그대로 `mount_nfs` 와 `umount` 가 동작합니다 (마운트 포인트 자체가 해당 사용자에게 쓰기 가능한 경로라는 전제하에).
 
 `mount_nfs` 가 "Operation not supported" 등으로 실패하면, 거의 항상 우리 서버가 클라이언트가 기대하는 어떤 op 또는 FATTR4 attr 를 채우지 못한 것이 원인입니다 — `swift run NanoNFSDemo` 의 로그 (`debug` 레벨로 올리려면 `LOG_LEVEL=debug swift run NanoNFSDemo`) 에 어느 op 에서 어떤 status 가 떨어졌는지가 찍힙니다.
 
