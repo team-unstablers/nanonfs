@@ -1,0 +1,175 @@
+<agent-task-report task="20260509-audit-rfc-reference.xml">
+    <agent>
+        <name>Claude Code</name>
+        <model>claude-opus-4-7[1m]</model>
+    </agent>
+    <executed-at>2026-05-09T00:00:00Z</executed-at>
+    <report>
+        # RFC reference audit results
+
+        ## Summary
+
+        - Cross-checked every `RFC 7530 §X` citation in the repository (95+ sites) against the actual table of contents and body text of `docs/rfc7530.txt`.
+        - Most common error pattern: **using the NFSv4 op number directly as the §16 section number**. RFC 7530's `§16.N` is *not* indexed by op number — operation N (3 ≤ N ≤ 39) lives in `§16.(N-2)` (e.g. ACCESS = op 3 / §16.1, CLOSE = op 4 / §16.2, COMMIT = op 5 / §16.3, …).
+            - Citations that happened to land on the right section (READ §16.23, WRITE §16.36, OPEN §16.16, etc.) were left alone; only the misaligned ones were corrected.
+        - Other corrections cover **wrong-chapter** citations (e.g. claiming `stateid4` lives in §3.3 / §8.1) and a handful of citations to subsections that **do not exist at all** (e.g. §3.3.5, §3.3.13, §5.11).
+        - `swift build` confirmed green throughout.
+
+        ## Catalogue of corrected hallucinations / misattributions
+
+        ### 1. CompoundDispatcher.swift — the most heavily off-by-N file
+
+        | Location (post-fix) | Old citation | Corrected citation | Why |
+        | --- | --- | --- | --- |
+        | line 5 | `§16.2 — COMPOUND` | `§15.2 — COMPOUND (Procedure 1)` | §16.2 is CLOSE. COMPOUND is a *procedure*, hence §15.2. |
+        | line 22 | `§16.2.4` (tag) | `§15.2.4` | Tag definition is in COMPOUND DESCRIPTION. |
+        | line 53 | `§16.2.4: tag has no length cap` | `§15.2.4: …` | Same as above. |
+        | line 64 | `§16.2.5 — minorversion mismatch` | `§15.2.4 — minorversion mismatch` | The `MINOR_VERS_MISMATCH` rule is stated in §15.2.4. |
+        | line 149 | `§16.20` (PUTPUBFH) | `§16.21 (PUTPUBFH)` | §16.20 is PUTFH; PUTPUBFH is §16.21. |
+        | line 165 | `Filehandle ops (§16.20-§16.31)` | `§16.8 GETFH, §16.20-§16.22, §16.29-§16.30 …` | The 16.20-31 range mostly contains unrelated ops (READ/READDIR/REMOVE, etc.). Replaced with the actual FH-handling sections. |
+        | line 184 | `§2.2.4: nfs_fh4` | `§2.1 (Table 1): nfs_fh4` | §2.2.4 is `specdata4`. `nfs_fh4` is in §2.1 Basic Data Types Table 1. |
+        | line 212 | `§16.30 — RESTOREFH without prior SAVEFH` | `§16.29 — RESTOREFH without prior SAVEFH` | §16.30 is SAVEFH; RESTOREFH is §16.29. |
+        | line 236 | `§16.3.3 — supported (==mask) + access` | `§16.1.3 — …` | §16.3 is COMMIT. ACCESS is §16.1; the RESULT subsection is §16.1.3. |
+        | line 253 | `§16.13.1 — component4 string` | `§16.13.4 — component4 string` | §16.13.1 is the one-line SYNOPSIS. The component4 length / UTF-8 rules are in LOOKUP DESCRIPTION (§16.13.4). |
+        | line 291 | `§16.27 — RENEW(clientid4 client)` | `§16.28 — RENEW(clientid4 client)` | §16.27 is RENAME; RENEW is §16.28. |
+        | line 307 | `MARK: GETATTR (§16.18)` | `MARK: GETATTR (§16.7)` | §16.18 is OPEN_CONFIRM; GETATTR is §16.7. |
+        | line 334 | `SETCLIENTID family (§16.33-§16.35)` | `SETCLIENTID family (§16.33-§16.34)` | §16.35 is VERIFY (unrelated to clientid lifecycle). |
+        | line 539 | `§16.24.3 lets the server pick the cookie` | `§16.24.4 lets the server pick the cookie` | §16.24.3 is the RESULT struct; the cookie semantics are described in §16.24.4 DESCRIPTION. |
+        | line 563 | `stateid4 (§3.3.12)` | `stateid4 (§2.2.16)` | §3.3 is Security Negotiation and has no .12 subsection at all. `stateid4` is defined in §2.2.16. |
+        | line 582 | `READ/WRITE/COMMIT (§16.23, §16.36, §16.5)` | `(§16.23, §16.36, §16.3)` | COMMIT is §16.3; §16.5 is DELEGPURGE. |
+        | line 646 | `writeverf is 8-byte opaque per §3.3.13` | `writeverf is verifier4 (8-byte opaque) per §2.1 / §16.36.3` | §3.3.13 does not exist. The `verifier4` type is in §2.1; the `writeverf` field is in WRITE RESULT (§16.36.3). |
+        | line 658 | `§16.31 — release_lockowner4` | `§16.37 — release_lockowner4` | §16.31 is SECINFO; RELEASE_LOCKOWNER is §16.37. |
+        | line 699 | `CREATE/REMOVE/RENAME/LINK (§16.7, §16.27, §16.28, §16.9)` | `(§16.4, §16.26, §16.27, §16.9)` | CREATE=§16.4, REMOVE=§16.26, RENAME=§16.27, LINK=§16.9. The original was off by one for three of the four. |
+        | line 854 | `change_info4 (§3.3.5)` | `change_info4 (§2.2.9)` | §3.3.5 does not exist. `change_info4` is defined in §2.2.9. |
+        | line 865 | `OPEN family (§16.16-§16.18, §16.4)` | `(§16.2 CLOSE, §16.16 OPEN, §16.18 OPEN_CONFIRM, §16.19 OPEN_DOWNGRADE)` | §16.4 is CREATE (only loosely related). Replaced with the ops the dispatcher actually treats as the OPEN family. |
+        | line 1038 | `§16.4.4 — server returns an updated stateid` (in the CLOSE handler) | `§16.2.4 — …` | CLOSE's DESCRIPTION is §16.2.4. |
+        | line 1065 | `open_delegation4 (§16.16.5)` | `open_delegation4 (§16.16.3)` | The `open_delegation4` struct lives in OPEN RESULT (§16.16.3). |
+        | line 1088 | `EVERYONE@ ACE (§5.11)` | `(§16.16.3, with EVERYONE@ semantics in §6.2.1.5.1)` | §5.11 does not exist (§5 only goes to .10). `EVERYONE@` semantics are in §6.2.1.5.1. |
+        | line 1302 | `empty resarray — §16.2.5` | `empty resarray — §15.2.4` | §16.2.5 is CLOSE IMPLEMENTATION. The empty-resarray rule is in COMPOUND DESCRIPTION (§15.2.4). |
+        | line 404 | `§13.1 lists 'expired' only for stateid` | `§13.1.5.3 lets NFS4ERR_EXPIRED apply to either a stateid or a clientid …` | §13.1.5.3 explicitly says "stateid or clientid" — the "only stateid" assertion was factually wrong. |
+
+        ### 2. NFSv4Constants.swift
+
+        - `// RFC 7530 §16.1 — operation opcodes (nfs_opnum4).` → corrected to `§14.4 / §16`. §16.1 is just one op (ACCESS); the op-number definition lives in §14.4 "Operation Values" + §16 as a whole.
+
+        ### 3. FATTR4.swift
+
+        - `LEASE_TIME (§5.6)` → `§5.8.1.11`. §5.6 is the REQUIRED-attrs table header; the actual definition is §5.8.1.11.
+        - `silently dropped from the response (§16.18 — GETATTR)` → `§16.7 — GETATTR`. §16.18 is OPEN_CONFIRM.
+        - `changeid4 (§5.7)` → `§5.8.1.4 (change attr) / §2.1 changeid4`. §5.7 is the RECOMMENDED-attrs table.
+        - `nfstime4 (§2.2.4)` → `§2.2.1`. §2.2.4 is `specdata4`.
+
+        ### 4. SetattrDecoder.swift
+
+        - `settime4 (§5.9)` → `§2.2.3`. §5.9 is owner / owner_group interpretation. `settime4` is defined in §2.2.3.
+
+        ### 5. RPCSession.swift
+
+        - `§3.2.1 + AUTH_SYS` → `§3.2`. §3.2.1 is RPCSEC_GSS / Kerberos; the place where AUTH_SYS is mentioned is §3.2 (Security Flavors).
+
+        ### 6. NFSError.swift
+
+        - `case wrongType // NFS4ERR_WRONG_TYPE = 10083 (§13.1.1)` → `mapped to NFS4ERR_BADTYPE = 10007 (§13.1.4.1)`. **`NFS4ERR_WRONG_TYPE` does not exist in RFC 7530** (it was added in NFSv4.1 / RFC 5661). The code's `wrongType` case is mapped to `NFS4ERR_BADTYPE` on the wire via `asStatus`, so the comment was rewritten to match the wire reality.
+
+        ### 7. NFSAccess.swift
+
+        - `MARK: Access (§16.3 ACCESS)` → `§16.1 ACCESS`. §16.3 is COMMIT.
+        - `MARK: Open / Lock owner (§3.3.6 / §8.1.2)` → `§2.2.13 open_owner4 / §2.2.14 lock_owner4`. §3.3 only has subsections .1-.3; §8.1 is Location Attributes.
+        - `≤ 1024 bytes opaque per §16.16` → `opaque<NFS4_OPAQUE_LIMIT> per §2.2.13 (NFS4_OPAQUE_LIMIT = 1024 in RFC 7531)`. The literal value 1024 is *not* in 7530 itself — it lives in 7531's XDR description.
+
+        ### 8. NFSValueTypes.swift
+
+        - `MARK: File handle (§2.2.4 / §16.x)` → `§2.1 nfs_fh4 / §16.x`.
+        - `≤ NFS4_FHSIZE per §2.2` → `per §2.1 (Table 1)`.
+        - `MARK: State identifier (§8.1.3)` → `§2.2.16 / §9.1.4`. §8 is Multi-Server Namespace.
+        - `12 bytes per §8.1.3 / NFS4_OTHER_SIZE` → `per §2.2.16 / NFS4_OTHER_SIZE`.
+        - `anonymous stateid (§8.1.4.2)` → `§9.1.4.3`. Both anonymous and READ-bypass stateids live in §9.1.4.3 "Special Stateids".
+        - `READ bypass stateid (§8.1.4.3)` → `§9.1.4.3`.
+        - `MARK: Time (§2.2.4 nfstime4)` → `§2.2.1 nfstime4`.
+        - `MARK: Object type (§2.2.4 nfs_ftype4)` → `§2.1 nfs_ftype4`.
+
+        ### 9. ClientRegistry.swift
+
+        - `§16.33-§16.35 — clientid lifecycle` → `§16.33-§16.34 (SETCLIENTID / SETCLIENTID_CONFIRM) + §16.28 (RENEW)`. §16.35 (VERIFY) has nothing to do with clientid lifecycle.
+        - The `§16.33.5` (line 56, SETCLIENTID IMPLEMENTATION) and `§16.34.5` (line 98, SETCLIENTID_CONFIRM IMPLEMENTATION) citations in the same file were verified directly against the RFC body and left untouched.
+
+        ### 10. RPCConstants.swift
+
+        - `NFSv4 program identification (§1.4)` → `§3.1 + §14`. §1.4 is "Overview of NFSv4 Features" — it does not cover the program number.
+        - `NFSv4 program callback identification (§1.4)` → `§14 + §16.33`. The callback program number is per-client and is announced via SETCLIENTID.
+
+        ### 11. CLAUDE.md (current rules + work-log entries)
+
+        - line 82 (§4 RFC reference policy *example*) `§16.23 (WRITE)` → `§16.36 (WRITE)`. §16.23 is READ; the example must end on a section number that actually matches the cited op.
+        - line 166 (work-log) `§16.1 의 nfs_opnum4` → `§14.4 / §16 의 nfs_opnum4`.
+        - line 228 (work-log) "OPEN4_share_access 의 high bits (§16.16.4) 에 OPEN4_SHARE_ACCESS_WANT_*" → replaced with a factually correct note: RFC 7530's OPEN4args (§16.16.2) has no high-bit hint slot, and the `OPEN4_SHARE_ACCESS_WANT_*` bits were added in RFC 5661 (NFSv4.1).
+        - line 255 (work-log) `§5.8 attr 표 (lines 2200–2310)` → `§5.6/§5.7 attr 표 (REQUIRED + RECOMMENDED, lines ~2225–2310)`. The actual line range covers §5.4-§5.7, and the attribute *tables* live in §5.6 (REQUIRED) and §5.7 (RECOMMENDED).
+
+        ### 12. Test files
+
+        - `Tests/NanoNFSTests/FATTRTests.swift:7` Suite name `(§5, §16.18)` → `(§5, §16.7)` (GETATTR).
+        - `Tests/NanoNFSTests/CompoundDispatcherTests.swift:167` Suite name `(§16.2)` → `(§15.2)`.
+        - Same file, line 326 `OPENATTR (§16.19, …)` → `(§16.17, …)`. §16.17 is OPENATTR; §16.19 is OPEN_DOWNGRADE.
+
+        ### 13. NFSv4Constants.swift `NFSStatus` raw-value shift fix (user follow-up request)
+
+        Initially reported in `<note>` as out of audit scope, but the user explicitly asked to fix the 1-slot shift in the 10037–10043 range as part of the same task.
+
+        | RFC 7530 §13.1 table | Old code | New code |
+        | --- | --- | --- |
+        | NFS4ERR_LOCKS_HELD     = 10037 (§13.1.8.6) | `lockNotGranted = 10037` (name not in RFC 7530) | `locksHeld     = 10037` |
+        | NFS4ERR_OPENMODE       = 10038 (§13.1.8.9) | `lockOldStateid = 10038` (name not in RFC 7530) | `openMode      = 10038` |
+        | NFS4ERR_BADOWNER       = 10039 (§13.1.11.2) | `openMode       = 10039` (name vs raw mismatch) | `badowner      = 10039` |
+        | NFS4ERR_BADCHAR        = 10040 (§13.1.7.1) | `badowner       = 10040` | `badchar       = 10040` |
+        | NFS4ERR_BADNAME        = 10041 (§13.1.7.2) | `badchar        = 10041` | `badname       = 10041` |
+        | NFS4ERR_BAD_RANGE      = 10042 (§13.1.8.1) | `badname        = 10042` | `badRange      = 10042` |
+        | NFS4ERR_LOCK_NOTSUPP   = 10043 (§13.1.8.7) | `badRange       = 10043` (name was meant to be BAD_RANGE) | `lockNotSupp   = 10043` |
+
+        Impact analysis:
+        - The only case actually used is `.badowner` (3 sites in `CompoundDispatcher.swift` lines 425/741/919 — owner-string parse failure paths in SETATTR / CREATE / OPEN). Before the fix the wire would emit `10040 (NFS4ERR_BADCHAR)` instead — macOS clients were receiving "bad character" instead of "bad owner". **The fix changes wire behaviour into RFC compliance — this is more than a cosmetic label tweak.**
+        - `lockNotGranted` and `lockOldStateid` are names that do not appear in RFC 7530 at all and were not referenced anywhere in the codebase. They were quietly removed by re-using their slots for the real RFC names `locksHeld` / `openMode`.
+        - `lockNotSupp = 10043` corresponds to `NFS4ERR_LOCK_NOTSUPP` in RFC 7530 §13.1.8.7. The shift fix freed up the slot and let us add the previously missing case at the same time.
+        - The `NFSError → NFSStatus` mapping (`asStatus` extension) only references cases whose raw values were already correct (e.g. `.lockRangeOverlap → .lockRange`), so it is unaffected.
+
+        Verification:
+        - `swift build` → success.
+        - `swift test` → 65 tests passed in 10 suites.
+
+        ## Build / test verification (overall)
+
+        - `swift build` → success.
+        - `swift test` → 65 tests passed (same count as before, no regressions).
+        - The citation-only changes have no behavioural effect (the only externally visible difference is the renaming of two test suites to cite the correct RFC sections).
+        - The `NFSStatus` raw-value shift fix *does* change wire semantics — currently exercised by exactly one call site (`.badowner`).
+
+        ### 14. CLAUDE.md §4 process rule hardening (user follow-up request)
+
+        User proposal: "to prevent hallucinations, work involving NFS spec must always look up the RFC 7530 document and cite the section / location in source code." The audit results themselves are evidence that the absence of such a rule led to accumulated hallucinations across the codebase, so the proposal was applied as written.
+
+        The existing §4 second bullet ("When the user references or quotes a specific section of `docs/rfc7530.txt`, **read that section directly** before responding") only fired *when the user explicitly referenced an RFC section*. It did not constrain the agent's *write path* — i.e. when an agent invents a `§16.X` citation from memory while authoring code. That gap is exactly how the 95+ citations audited here ended up wrong.
+
+        New rule (prepended as the first bullet of §4):
+        - **Mandatory direct lookup in `docs/rfc7530.txt` before writing any new RFC 7530 citation.** Memory, prior training data, and analogy from other NFS RFCs (5661 / 3530) are all explicitly disallowed. If the citation cannot be positively verified, either grep the RFC for the relevant op / struct / error name first or do not write the citation at all.
+        - The three traps repeatedly observed during this audit are pinned inline:
+          1. **Op number ↔ §16 section number offset** (op N = §16.(N-2), N=3..39). Five worked examples included (ACCESS / COMPOUND / GETATTR / READ / WRITE).
+          2. **Data-type locations**: `stateid4`, `nfstime4`, `change_info4`, `nfs_fh4`, `verifier4`, `open_owner4`, `lock_owner4`, etc. are defined in §2.1 or §2.2.X, *not* in §3.3.X / §8.1.X. (Both bogus chapters were observed in this audit.)
+          3. **NFSv4.1 (RFC 5661) features misattributed to 7530**: `OPEN4_SHARE_ACCESS_WANT_*`, `NFS4ERR_WRONG_TYPE`, `SECINFO_NO_NAME`, `NFS4ERR_LOCK_NOTGRANTED`, etc. do not exist in 7530. When in doubt, grep first.
+
+        With this rule in place, future-session agents cannot skip the lookup step at write time, which means a large post-hoc audit like this one should not have to be repeated.
+
+        Verification:
+        - No `swift build` impact (rule-only change).
+        - Touched: `CLAUDE.md` §4 (rule body) + the 2026-05-09 entry in §7 (decision record).
+
+        ## What was deliberately *not* changed
+
+        - `RFC 4506` (XDR) and `RFC 5531` (ONC RPC) citations are outside the direct scope of this audit (which was tied to `docs/rfc7530.txt`). The existing `RFC 5531 §9 / §11 / §A.2 / §8.2` citations in code map onto the well-known structure of ONC RPC and were judged to be sound at a glance, so they were left as-is.
+        - Per the CLAUDE.md §0 rule "Higher items win on conflict", work-log entries (2026-05-03 ~ 2026-05-08, in Korean) are point-in-time records. However, four clearly wrong RFC citations there would mislead future sessions and were corrected (see §11 above). The surrounding narrative was preserved.
+    </report>
+    <note>
+        # Findings outside the audit scope (for reference)
+
+        - `change_info4.atomic = false` with `before == after` (around CompoundDispatcher.swift:854) had its RFC citation corrected, but the underlying weakness in atomic-change verification still stands. It is already noted under "next work" in the 2026-05-03 work-log entry, so no separate tracking ticket was created here.
+        - The CLAUDE.md 2026-05-03 note "NFS4ERR_LOCK_NOTSUPP (raw 가 같을 위험)" was itself factually off — the raw values are 10043 vs 10044, never colliding. With the present fix `NFS4ERR_LOCK_NOTSUPP = 10043` is now properly defined, so the original concern is moot.
+    </note>
+</agent-task-report>
