@@ -2,6 +2,8 @@
 
 A loopback-only NFS server that provides a FUSE-like API — Swift Package.
 
+> Vibe-coded with Claude Code. One of the open-source components of [Noctiluca](https://noctiluca.app), but you may want to validate it for your own use case before relying on it.
+
 > This document is itself the **specification** for nanonfs. All external behavior, public API, and implementation scope take this document as the primary source.
 > The wire protocol supported by this package is **NFSv4.0 (RFC 7530)** only. The file `docs/rfc7530.txt` at the package root is the authoritative reference.
 

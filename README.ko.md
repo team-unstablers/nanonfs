@@ -2,6 +2,8 @@
 
 FUSE-like 한 API를 제공하는 로컬 액세스 (루프백) 전용 NFS 서버 — Swift Package.
 
+> Vibe-coded with Claude Code. [Noctiluca](https://noctiluca.app) 의 오픈 소스 컴포넌트 중 하나이지만, 사용 전에는 충분한 내부 검증이 필요할 수도 있습니다.
+
 > 이 문서 자체가 nanonfs의 **스펙 문서** 입니다. 모든 외부 동작·공개 API·구현 범위는 이 문서를 1차 출처로 삼습니다.
 > 본 패키지의 와이어 프로토콜은 **NFSv4.0 (RFC 7530)** 한 종만 지원합니다. 패키지 루트의 `docs/rfc7530.txt` 가 정본 근거 문서입니다.
 
