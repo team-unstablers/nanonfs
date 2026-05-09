@@ -438,7 +438,7 @@ struct NanoNFSDemo {
         logger.info("Demo NFS server starting on 127.0.0.1:14049 (in-memory R/W, transport=\(transportSelection.label))")
         logger.info("Mount with: mount_nfs -o vers=4,port=14049,mountport=14049,tcp,rsize=1048576,wsize=1048576,dsize=1048576,actimeo=30,noatime,async 127.0.0.1:/ ~/nanonfs_test")
         logger.info("Set LOG_LEVEL=debug to trace failing COMPOUND ops.")
-        logger.info("Pick the transport with --transport=nio (default) or --transport=bsdSocket.")
+        logger.info("Pick the transport with --transport=bsdSocket (default; always available) or --transport=nio (requires the NIO trait).")
         try await listener.run()
     }
 }
@@ -477,13 +477,7 @@ private func resolveTransport(_ selection: TransportSelection, logger: Logger) t
         throw DemoError.transportNotAvailable("nio")
         #endif
     case .bsdSocket:
-        #if BSDSOCKET
         return .bsdSocket
-        #else
-        logger.error("--transport=bsdSocket requested but the BSDSocket trait is disabled in this build.")
-        logger.error("Rebuild with: swift run --traits BSDSocket NanoNFSDemo --transport=bsdSocket")
-        throw DemoError.transportNotAvailable("bsdSocket")
-        #endif
     }
 }
 
