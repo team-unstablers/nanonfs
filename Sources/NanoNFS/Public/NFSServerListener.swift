@@ -65,18 +65,17 @@ public final class NFSServerListener: Sendable {
     }
 
     /// Resolve the configured `NFSTransport` to an actual implementation. The
-    /// `.custom` case forwards the user's value; the trait-gated cases pick
-    /// the corresponding internal type.
+    /// `.custom` case forwards the user's value; the trait-gated `.nio` arm
+    /// is only compiled when the `NIO` trait is on. `.bsdSocket` is always
+    /// available.
     private func resolveImplementation() -> any NFSTransportImplementation {
         switch transport {
         #if NIO
         case .nio(let groupBox):
             return NIOTransport(eventLoopGroupBox: groupBox)
         #endif
-        #if BSDSOCKET
         case .bsdSocket:
             return BSDSocketTransport()
-        #endif
         case .custom(let impl):
             return impl
         }
