@@ -1,12 +1,21 @@
 // swift-tools-version: 6.2
 import PackageDescription
 
-// SE-0450 package traits select which TCP transport implementation is built
-// into NanoNFS. Baseline dependencies (NIOCore, NIOFoundationCompat,
-// Logging, Atomics) are pulled unconditionally — see CLAUDE.md §3 "Trait
-// gating" and README.md §2 for the rationale. The xdr / rpc / wire layers
-// rely on `NIOCore.ByteBuffer` regardless of trait selection, so gating it
-// would leave the encoder uncompilable.
+// The pure-Swift-Concurrency BSD-socket listener (`NFSTransport.bsdSocket`)
+// is the always-on baseline transport — it has no extra dependencies beyond
+// `Foundation` + `Darwin` and is compiled unconditionally. The Swift-NIO
+// based listener is opt-in through the `NIO` SE-0450 package trait, which
+// also pulls the `NIO` / `NIOPosix` products. Default-trait set is empty,
+// so a plain `swift build` with no `--traits` flag yields the BSDSocket-only
+// build. This shape is also robust against toolchains where SE-0450 default
+// traits are not honoured: a missing `NIO` define just disables the NIO
+// listener, leaving BSDSocket as a working fallback.
+//
+// Baseline dependencies (NIOCore, NIOFoundationCompat, Logging, Atomics)
+// are pulled unconditionally — see CLAUDE.md §3 "Trait gating" and
+// README.md §2 for the rationale. The xdr / rpc / wire layers rely on
+// `NIOCore.ByteBuffer` regardless of trait selection, so gating it would
+// leave the encoder uncompilable.
 
 let package = Package(
     name: "nanonfs",
@@ -22,13 +31,8 @@ let package = Package(
     traits: [
         .trait(
             name: "NIO",
-            description: "Build the NIOPosix-backed listener (NFSTransport.nio)."
+            description: "Build the NIOPosix-backed listener (NFSTransport.nio) in addition to the always-on BSDSocket listener."
         ),
-        .trait(
-            name: "BSDSocket",
-            description: "Build the pure-Swift-Concurrency BSD socket listener (NFSTransport.bsdSocket)."
-        ),
-        .default(enabledTraits: ["NIO"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
@@ -55,7 +59,6 @@ let package = Package(
                 .swiftLanguageMode(.v6),
                 .enableUpcomingFeature("StrictConcurrency"),
                 .define("NIO", .when(traits: ["NIO"])),
-                .define("BSDSOCKET", .when(traits: ["BSDSocket"])),
             ]
         ),
         .executableTarget(
@@ -69,7 +72,6 @@ let package = Package(
                 .swiftLanguageMode(.v6),
                 .enableUpcomingFeature("StrictConcurrency"),
                 .define("NIO", .when(traits: ["NIO"])),
-                .define("BSDSOCKET", .when(traits: ["BSDSocket"])),
             ]
         ),
         .testTarget(
@@ -80,7 +82,6 @@ let package = Package(
                 .swiftLanguageMode(.v6),
                 .enableUpcomingFeature("StrictConcurrency"),
                 .define("NIO", .when(traits: ["NIO"])),
-                .define("BSDSOCKET", .when(traits: ["BSDSocket"])),
             ]
         ),
     ]
