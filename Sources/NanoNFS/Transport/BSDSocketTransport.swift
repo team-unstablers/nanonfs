@@ -1,5 +1,3 @@
-#if BSDSOCKET
-
 import Foundation
 import Logging
 import NIOCore
@@ -674,5 +672,3 @@ fileprivate func formatSockaddr(_ addr: UnsafeMutablePointer<sockaddr_storage>) 
         }
     }
 }
-
-#endif
