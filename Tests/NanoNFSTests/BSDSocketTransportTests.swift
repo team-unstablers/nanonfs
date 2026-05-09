@@ -1,5 +1,3 @@
-#if BSDSOCKET
-
 import Foundation
 import Logging
 import NIOCore
@@ -13,7 +11,8 @@ import Testing
 // what we already check for NIO, so a difference in outcome means the
 // BSDSocket implementation diverges from the contract.
 //
-// Trait-gated: the suite only compiles when the `BSDSocket` trait is on.
+// `.bsdSocket` is the always-on baseline transport, so this suite is
+// always compiled.
 @Suite("Listener integration via BSDSocket transport")
 struct BSDSocketTransportTests {
 
@@ -144,5 +143,3 @@ struct BSDSocketTransportTests {
         throw BindTimeout()
     }
 }
-
-#endif
