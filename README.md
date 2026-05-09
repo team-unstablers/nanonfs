@@ -45,7 +45,7 @@ Non-goals:
 | Package | Purpose | Always pulled? |
 | --- | --- | --- |
 | `apple/swift-nio` (`NIOCore`, `NIOFoundationCompat`) | `ByteBuffer` and the encoder primitives that the XDR / RPC / Wire layers are built on | Yes — baseline |
-| `apple/swift-nio` (`NIO`, `NIOPosix`) | The default NIO-backed listener (`NFSTransport.nio`) | Only with the `NIO` trait |
+| `apple/swift-nio` (`NIO`, `NIOPosix`) | The optional NIO-backed listener (`NFSTransport.nio`) | Only with the `NIO` trait |
 | `apple/swift-log` | Logging facade | Yes — baseline |
 | `apple/swift-atomics` | Lockless counters such as client / session counters | Yes — baseline |
 
@@ -55,17 +55,17 @@ Tests are written using **swift-testing** (`@Test`). The `mount_nfs` integration
 
 ### Package traits
 
-`NanoNFS` exposes two traits that select which TCP listener implementation is built into the library. At least one trait must be enabled, otherwise the package fails to compile.
+`NFSTransport.bsdSocket` — the pure-Swift-Concurrency BSD-socket listener — is the always-on baseline transport and pulls nothing beyond `Foundation` + `Darwin`. The Swift-NIO based listener (`NFSTransport.nio`) is opt-in through a single SE-0450 package trait:
 
 | Trait | Default | Listener implementation | External dependencies pulled |
 | --- | --- | --- | --- |
-| `NIO` | enabled | `NFSTransport.nio(eventLoopGroup:)` — `NIOPosix.ServerBootstrap` based | `swift-nio`'s `NIO` and `NIOPosix` products |
-| `BSDSocket` | disabled | `NFSTransport.bsdSocket` — pure Swift Concurrency on top of `socket(2)` + `kqueue(2)` + `EVFILT_USER` | none beyond baseline (`Foundation` + `Darwin`) |
+| _(no trait)_ | n/a | `NFSTransport.bsdSocket` — pure Swift Concurrency on `socket(2)` + `kqueue(2)` + `EVFILT_USER` | none beyond baseline (`Foundation` + `Darwin`) |
+| `NIO` | disabled | also enables `NFSTransport.nio(eventLoopGroup:)` — `NIOPosix.ServerBootstrap` based | `swift-nio`'s `NIO` and `NIOPosix` products |
 
-To opt out of NIO entirely (e.g. when consuming `NanoNFS` from a host application that does not want a Swift-NIO dependency for the network layer), disable the `NIO` trait and enable `BSDSocket`:
+A plain `swift build` with no `--traits` flag yields the BSDSocket-only build. To pull the NIO listener as well:
 
-```swift
-.package(url: "...", from: "...", traits: ["BSDSocket"])
+```sh
+swift build --traits NIO
 ```
 
 Or, in a `Package.swift` consumer:
@@ -74,14 +74,13 @@ Or, in a `Package.swift` consumer:
 .package(
     url: "https://github.com/.../nanonfs.git",
     from: "0.x.0",
-    traits: [
-        .trait(name: "BSDSocket"),
-        // .default omitted — disables NIO
-    ]
+    traits: ["NIO"]
 )
 ```
 
-Both traits can be enabled simultaneously. In that case `NFSTransport.default` resolves to `.nio()`; `.bsdSocket` is still available for explicit selection.
+When the `NIO` trait is on, both `.nio()` and `.bsdSocket` are available; `NFSTransport.default` resolves to `.nio()`. With the trait off, only `.bsdSocket` is available and `NFSTransport.default` resolves to it.
+
+> **Toolchain note.** Because BSDSocket is unconditional and the default-trait set is empty, `NanoNFS` also compiles cleanly on toolchains where SE-0450 default traits are not honoured — the build simply lands on the BSDSocket-only configuration.
 
 ### Sources directory layout
 
@@ -116,7 +115,7 @@ actor MyFS: NFSServer {
 let listener = NFSServerListener(
     server: MyFS(),
     bind: .loopback(port: 14049),   // default 127.0.0.1:14049
-    transport: .default              // .nio() when the NIO trait is on, .bsdSocket otherwise
+    transport: .default              // .nio() when the NIO trait is on, .bsdSocket otherwise (always available)
 )
 
 try await listener.run()
@@ -130,7 +129,7 @@ sudo mount_nfs -o vers=4,port=14049,mountport=14049,tcp 127.0.0.1:/ /mnt/myfs
 
 The library does not help with invoking `mount_nfs` (that is the user's responsibility). However, the `Bind` configuration explicitly prevents binding to external interfaces in order to guarantee the loopback intent.
 
-The transport is pluggable. Picking `.nio()` (the default when the `NIO` trait is on) uses an `NIOPosix.ServerBootstrap`-based listener that lets you optionally inject your own `EventLoopGroup`. Picking `.bsdSocket` uses a pure Swift Concurrency listener built directly on `socket(2)` + `kqueue(2)` and pulls no Swift-NIO product beyond the baseline `NIOCore` (used as the XDR encoding medium). You can also supply a custom transport with `.custom(myImpl)` — see §4.6.
+The transport is pluggable. `.bsdSocket` is the always-on baseline — a pure Swift Concurrency listener built directly on `socket(2)` + `kqueue(2)` that pulls no Swift-NIO product beyond the baseline `NIOCore` (used as the XDR encoding medium). Enabling the `NIO` trait additionally builds `.nio()`, an `NIOPosix.ServerBootstrap`-based listener that lets you optionally inject your own `EventLoopGroup`; when the trait is on, `NFSTransport.default` resolves to `.nio()`. You can also supply a custom transport with `.custom(myImpl)` — see §4.6.
 
 ---
 
@@ -479,10 +478,11 @@ public final class NFSServerListener: Sendable {
 #### Transport selection
 
 ```swift
-/// Selects which TCP listener implementation `NFSServerListener` uses. Cases
-/// are conditionally compiled in based on the package traits enabled at build
-/// time (see §2). `Equatable` is intentionally not synthesised because
-/// `case custom(any ...)` cannot be compared structurally.
+/// Selects which TCP listener implementation `NFSServerListener` uses.
+/// `case bsdSocket` is always available. `case nio` is only compiled in
+/// when the `NIO` package trait is on (see §2). `Equatable` is intentionally
+/// not synthesised because `case custom(any ...)` cannot be compared
+/// structurally.
 public enum NFSTransport: Sendable {
     #if NIO
     /// Swift-NIO based listener. If `eventLoopGroup` is `nil` the transport
@@ -492,18 +492,17 @@ public enum NFSTransport: Sendable {
     case nio(eventLoopGroup: NFSNIOEventLoopGroupBox? = nil)
     #endif
 
-    #if BSDSOCKET
     /// macOS BSD socket based listener. Pure Swift Concurrency on top of
     /// `socket(2)` + `kqueue(2)` + `EVFILT_USER`. No GCD, no Network.framework.
+    /// Always available — this is the baseline transport.
     case bsdSocket
-    #endif
 
     /// User-supplied implementation.
     case custom(any NFSTransportImplementation)
 
-    /// Resolves to the highest-priority enabled trait at build time.
-    /// Priority: `nio` > `bsdSocket`. If neither trait is enabled,
-    /// the package fails to compile (`#error`).
+    /// Resolves to the highest-priority transport available in this build.
+    /// Priority: `nio` > `bsdSocket`. With the `NIO` trait off, `.default`
+    /// is `.bsdSocket`.
     public static var `default`: NFSTransport { get }
 }
 
