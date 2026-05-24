@@ -77,11 +77,13 @@ It can be tempting to break the dependency direction in order to avoid cross-lay
 
 ### Trait gating
 
-- Two package traits — `NIO` (default-enabled) and `BSDSocket` — control which transport implementation is compiled into the library. Inside the source these are surfaced as `#if NIO` / `#if BSDSOCKET` (uppercase, set via `swiftSettings.define(...)` in `Package.swift`).
-- **Each file under `Sources/NanoNFS/Transport/` is wrapped in a single top-level `#if` for its trait.** Do not sprinkle trait-conditional pieces into shared files; if a trait is off, the corresponding transport file becomes effectively empty.
+- The pure-Swift-Concurrency BSD-socket listener (`Sources/NanoNFS/Transport/BSDSocketTransport.swift`, `NFSTransport.bsdSocket`) is the **always-on baseline transport**. It is compiled unconditionally — no `#if` guards — and pulls nothing beyond `Foundation` + `Darwin`.
+- A single SE-0450 package trait, `NIO`, opts the Swift-NIO based listener (`NIOTransport.swift`, `NFSTransport.nio`) into the build. Inside the source it is surfaced as `#if NIO` (uppercase, set via `swiftSettings.define("NIO", .when(traits: ["NIO"]))` in `Package.swift`).
+- The default-trait set is empty: a plain `swift build` with no `--traits` flag produces a BSDSocket-only build. This shape is also chosen so that toolchains which fail to honour SE-0450 default traits land on the same BSDSocket-only fallback rather than failing to compile.
+- **`NIOTransport.swift` is wrapped in a single top-level `#if NIO`.** Do not sprinkle trait-conditional pieces into shared files; if `NIO` is off, the file becomes effectively empty. `BSDSocketTransport.swift` is unconditional — do not re-introduce a `#if BSDSOCKET` guard.
 - Baseline dependencies (`NIOCore`, `NIOFoundationCompat`, `swift-log`, `swift-atomics`) are pulled unconditionally — never put them behind a trait condition. `NIOCore.ByteBuffer` is the encoding medium across XDR / RPC / Wire and trait-gating it would leave the encoder uncompilable.
-- Public API never gates a *type* on a trait unless the type is meaningless without that trait. The current exception is `NFSNIOEventLoopGroupBox`, which only exists when `NIO` is enabled.
-- A user must enable at least one transport trait. `Package.swift` enforces this with a top-level `#error` when both traits are off.
+- Public API never gates a *type* on a trait unless the type is meaningless without that trait. The current exception is `NFSNIOEventLoopGroupBox`, which only exists when `NIO` is enabled. `NFSTransport.bsdSocket` is **not** trait-gated and is part of the unconditional public surface.
+- `NFSTransport.default` priority is `nio` > `bsdSocket`: with the `NIO` trait on it returns `.nio()`, otherwise `.bsdSocket`.
 
 ---
 
@@ -158,5 +160,6 @@ It can be tempting to break the dependency direction in order to avoid cross-lay
 - [2026-05-09 — RFC 4506 reference audit (third in the series; clean)](task_logs/2026-05-09-rfc4506-audit.md)
 - [2026-05-09 — BSD-socket transport spec v1.1 confirmed](task_logs/2026-05-09-bsdsocket-spec-v11.md)
 - [2026-05-09 — BSD-socket transport implementation (spec v1.1 landed)](task_logs/2026-05-09-bsdsocket-impl.md)
+- [2026-05-10 — BSDSocket promoted to always-on baseline; only `NIO` is trait-gated](task_logs/2026-05-10-bsdsocket-baseline.md)
 
 <!-- New entries: append a new bullet at the bottom of the index AND create the corresponding file in task_logs/. -->

@@ -4,15 +4,11 @@ import Logging
 import NIOCore
 #endif
 
-#if !NIO && !BSDSOCKET
-#error("nanonfs requires at least one transport trait to be enabled (NIO or BSDSocket).")
-#endif
-
 // MARK: - NFSTransport selection enum
 
 /// Selects which TCP listener implementation `NFSServerListener` uses.
-/// Cases are conditionally compiled in based on the package traits enabled
-/// at build time (see `README.md` §2 / `Package.swift`).
+/// `case bsdSocket` is always available; `case nio` is only compiled when
+/// the `NIO` package trait is enabled (see `README.md` §2 / `Package.swift`).
 ///
 /// `Equatable` is intentionally *not* synthesised: `case custom(any ...)`
 /// carries an existential and existentials cannot be compared structurally.
@@ -29,24 +25,24 @@ public enum NFSTransport: Sendable {
     case nio(eventLoopGroup: NFSNIOEventLoopGroupBox? = nil)
     #endif
 
-    #if BSDSOCKET
     /// macOS BSD socket based listener. Pure Swift Concurrency on top of
     /// `socket(2)` + `kqueue(2)` + `EVFILT_USER`. No GCD, no Network.framework.
+    /// Always available — this is the baseline transport and is compiled
+    /// regardless of trait selection.
     case bsdSocket
-    #endif
 
     /// User-supplied implementation. The implementation owns
     /// bind / accept loop / per-connection raw byte I/O; record-mark
     /// framing and RPC dispatch stay on `NFSServerListener`.
     case custom(any NFSTransportImplementation)
 
-    /// Resolves to the highest-priority enabled trait at build time.
-    /// Priority is `nio` > `bsdSocket`. If neither trait is enabled, the
-    /// package fails to compile (see the top-level `#error` above).
+    /// Resolves to the highest-priority transport available in this build.
+    /// Priority is `nio` > `bsdSocket`: when the `NIO` trait is enabled
+    /// `.default` returns `.nio()`, otherwise it returns `.bsdSocket`.
     public static var `default`: NFSTransport {
         #if NIO
         return .nio()
-        #elseif BSDSOCKET
+        #else
         return .bsdSocket
         #endif
     }
